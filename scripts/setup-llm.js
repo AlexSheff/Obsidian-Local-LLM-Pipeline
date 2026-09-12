@@ -78,6 +78,13 @@ async function setupLlamaCpp() {
     }).on('error', reject);
   });
 
+  if (!Array.isArray(releaseInfo)) {
+    if (releaseInfo.message && releaseInfo.message.includes('API rate limit')) {
+      throw new Error('\nGitHub API rate limit exceeded. \nWORKAROUND: Download the llama.cpp release manually from https://github.com/ggerganov/llama.cpp/releases and extract "llama-server.exe" into the "/llm/bin/" folder, then run install.bat again.');
+    }
+    throw new Error(`GitHub API Error: ${releaseInfo.message || 'Unknown error'}`);
+  }
+
   const validRelease = releaseInfo.find(r => r.assets && r.assets.length > 5);
   if (!validRelease) throw new Error('Could not find a valid release for llama.cpp');
   
