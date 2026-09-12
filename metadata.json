@@ -1,0 +1,6 @@
+{
+  "name": "Hermes Obsidian Pipeline",
+  "description": "Local intelligence pipeline for automatically categorizing Obsidian inbox notes using a local LLM via llama.cpp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
