@@ -96,7 +96,9 @@ async function processFile(filePath: string) {
       }
     } else {
       originalContent = await fsPromises.readFile(filePath, 'utf-8');
-      let text = originalContent;
+      
+      // Attempt to clean encoding artifacts/weird chars if any
+      let text = originalContent.replace(/\uFFFD/g, ''); 
       
       if (fileExtension === '.html' || fileExtension === '.xml') {
         text = text.replace(/<[^>]*>?/gm, '\n').replace(/\n\s*\n/g, '\n').trim();
@@ -198,7 +200,8 @@ ${textToProcess}
       let tag = String(t).trim().replace(/^#/, '');
       tag = tag.replace(/\s+/g, '-');
       return `#${tag}`;
-    });
+    }).filter((t: string) => t !== '#' && t !== '#null' && t !== '#undefined');
+    
     // In YAML frontmatter, tags starting with # should be quoted if presented as a list, or we can just output them unquoted if we are careful, but quoting is safer to prevent YAML parsing errors
     const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.map(t => `"${t}"`).join('\n  - ')}` : ' []';
     
