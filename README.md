@@ -90,6 +90,17 @@ The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model
     - The LLM server will start in the background (logs in `/llm/server.log`).
     - The Node backend will start, and the dashboard will be available at `http://localhost:3000`.
 
+### Troubleshooting: GitHub API Rate Limit
+
+If you receive a `GitHub API Error` or `API rate limit exceeded` during the `install.bat` step, it means GitHub has temporarily blocked automated downloads from your IP. 
+
+**Manual Workaround:**
+1. Manually download the `llama.cpp` binary for your OS from the [official GitHub releases](https://github.com/ggerganov/llama.cpp/releases) (look for `win-avx2-x64.zip` or `win-cpu-x64.zip` on Windows).
+2. Extract the archive and copy **only** the `llama-server.exe` file.
+3. Paste it into the `llm/bin/` folder inside your project directory (create the folder if it doesn't exist).
+4. (Optional) Place your `.gguf` model in `llm/models/`.
+5. Run `install.bat` again. The script will detect the files and instantly skip the download phase.
+
 ---
 
 ## Usage Guide

@@ -7,7 +7,8 @@ import chokidar from 'chokidar';
 import axios from 'axios';
 import { createRequire } from 'module';
 const req = typeof require !== 'undefined' ? require : createRequire(import.meta.url);
-const pdfParse = req('pdf-parse');
+const pdfParseModule = req('pdf-parse');
+const pdfParse = typeof pdfParseModule === 'function' ? pdfParseModule : (pdfParseModule.default || pdfParseModule);
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
@@ -77,13 +78,13 @@ async function processFile(filePath: string) {
       try {
         const dataBuffer = await fsPromises.readFile(filePath);
         const pdfData = await pdfParse(dataBuffer);
-        textToProcess = pdfData.text.slice(0, 2000);
+        textToProcess = pdfData.text.slice(0, 5000);
       } catch (err: any) {
         throw new Error(`Failed to parse PDF: ${err.message}`);
       }
     } else {
       originalContent = await fsPromises.readFile(filePath, 'utf-8');
-      textToProcess = originalContent.slice(0, 2000);
+      textToProcess = originalContent.slice(0, 5000);
     }
     
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
@@ -97,11 +98,11 @@ The required fields are:
 1. "title" (string): A short, clear title for the document.
 2. "type" (string): MUST be one of: idea, concept, note, research, whitepaper, specification, technical_document, project, plan, story, scenario, essay, article, script, dialogue, transcript, journal, meeting, reference, tutorial, list, correspondence, archive, unknown.
 3. "summary" (string): A brief summary of the content.
-4. "tags" (string): Comma-separated list of tags.
-5. "entities" (string): Comma-separated list of people, orgs, or places mentioned.
-6. "projects" (string): Comma-separated list of related projects.
-7. "tasks" (string): Comma-separated list of actionable tasks identified.
-8. "key_points" (string): 3-5 key points extracted.
+4. "tags" (array of strings): List of tags without the '#' symbol.
+5. "entities" (array of strings): List of people, orgs, or places mentioned.
+6. "projects" (array of strings): List of related projects.
+7. "tasks" (array of strings): List of actionable tasks identified.
+8. "key_points" (array of strings): 3-5 key points extracted.
 
 Text:
 ${textToProcess}
@@ -166,22 +167,34 @@ ${textToProcess}
     else if (semanticType === 'idea') destFolder = path.join('05_Ideas', 'Inbox');
     else if (semanticType === 'archive') destFolder = path.join('06_Archive', 'Other');
     
-    // Format tags as a valid YAML list if it's comma separated
-    const formattedTags = (data.tags || '').split(',').map((t: string) => t.trim().replace(/^#/, '')).filter(Boolean);
-    const tagsYaml = formattedTags.length > 0 ? `\n  - ${formattedTags.join('\n  - ')}` : ' []';
+    // Helper to format arrays safely
+    const formatArray = (arr: any) => {
+      if (!arr) return [];
+      if (Array.isArray(arr)) return arr;
+      if (typeof arr === 'string') return arr.split(',').map(s => s.trim()).filter(Boolean);
+      return [];
+    };
+
+    // Format tags as a valid YAML list
+    const parsedTags = formatArray(data.tags).map((t: string) => t.replace(/^#/, ''));
+    const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.join('\n  - ')}` : ' []';
     
     // Format other lists
-    const formatList = (str: string) => (str || '').split(',').map((s: string) => `"${s.trim().replace(/"/g, '\\"')}"`).filter(s => s !== '""').join(', ');
+    const formatList = (arr: any) => {
+      const list = formatArray(arr);
+      if (list.length === 0) return '[]';
+      return `[${list.map(s => `"${String(s).replace(/"/g, '\\"')}"`).join(', ')}]`;
+    };
 
     const frontmatter = `---
 title: "${(data.title || 'Untitled').replace(/"/g, '\\"')}"
 type: ${data.type || 'knowledge_topic'}
 tags:${tagsYaml}
 summary: "${(data.summary || '').replace(/"/g, '\\"')}"
-key_points: [${formatList(data.key_points)}]
-entities: [${formatList(data.entities)}]
-projects: [${formatList(data.projects)}]
-tasks: [${formatList(data.tasks)}]
+key_points: ${formatList(data.key_points)}
+entities: ${formatList(data.entities)}
+projects: ${formatList(data.projects)}
+tasks: ${formatList(data.tasks)}
 ---
 `;
 
