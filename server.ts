@@ -128,7 +128,15 @@ Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
 
 The required fields are:
 1. "title" (string): A short, clear title for the document.
-2. "type" (string): MUST be one of: idea, concept, note, research, whitepaper, specification, technical_document, project, plan, story, scenario, essay, article, script, dialogue, transcript, journal, meeting, reference, tutorial, list, correspondence, archive, unknown.
+2. "type" (string): MUST be one of the following exact strings:
+   - "person", "contact" (for people, contacts, character profiles)
+   - "organization", "place", "entity" (for companies, locations, generic entities)
+   - "project", "plan", "task" (for actionable projects or plans)
+   - "story", "scenario", "script", "short_film", "essay", "article", "document" (for creative writing, scripts, and texts)
+   - "idea", "concept", "note", "research", "tutorial", "list" (for general knowledge)
+   - "reference", "whitepaper", "specification", "technical_document" (for technical references)
+   - "journal", "meeting", "event", "dialogue", "transcript", "correspondence" (for time-based logs and conversations)
+   - "archive", "unknown" (if none fit)
 3. "summary" (string): A brief summary of the content.
 4. "tags" (array of strings): List of tags without the '#' symbol.
 5. "entities" (array of strings): List of people, orgs, or places mentioned.
@@ -184,15 +192,15 @@ ${textToProcess}
     const semanticType = data.type?.toLowerCase() || 'unknown';
     let destFolder = path.join('03_Knowledge', 'Topics'); // default
     
-    if (['project', 'plan'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
-    else if (semanticType === 'person') destFolder = path.join('02_Areas', 'People');
+    if (['project', 'plan', 'task'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
+    else if (['person', 'contact'].includes(semanticType)) destFolder = path.join('02_Areas', 'People');
     else if (semanticType === 'organization') destFolder = path.join('02_Areas', 'Organizations');
     else if (semanticType === 'place') destFolder = path.join('02_Areas', 'Places');
     else if (semanticType === 'entity') destFolder = path.join('02_Areas', 'Entities');
     else if (semanticType === 'concept') destFolder = path.join('03_Knowledge', 'Concepts');
     else if (['topic', 'note', 'research', 'tutorial', 'list', 'correspondence', 'unknown'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Topics');
     else if (['reference', 'whitepaper', 'specification', 'technical_document'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'References');
-    else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
+    else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'short_film', 'dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
     else if (semanticType === 'journal') destFolder = path.join('04_Journal', 'Daily');
     else if (semanticType === 'meeting') destFolder = path.join('04_Journal', 'Meetings');
     else if (semanticType === 'event') destFolder = path.join('04_Journal', 'Events');
