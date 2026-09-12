@@ -3,11 +3,14 @@ import path from 'path';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import crypto from 'crypto';
-import chokidar from 'chokidar';
+import chokidar, { FSWatcher } from 'chokidar';
 import axios from 'axios';
-import pdfParse from 'pdf-parse';
+import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 import { createServer as createViteServer } from 'vite';
+
+// Handle pdf-parse default export issue
+const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 
 const app = express();
 const PORT = 3000;
@@ -18,7 +21,7 @@ const CONFIG_FILE = path.join(process.cwd(), 'config.json');
 
 // State for the pipeline
 let isWatching = false;
-let watcher: chokidar.FSWatcher | null = null;
+let watcher: FSWatcher | null = null;
 let currentConfig = {
   vaultPath: '',
   llamaUrl: 'http://127.0.0.1:8080'
