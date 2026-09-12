@@ -16,6 +16,8 @@ const PORT = 3000;
 
 app.use(express.json());
 
+const CONFIG_FILE = path.join(process.cwd(), 'config.json');
+
 // State for the pipeline
 let isWatching = false;
 let watcher: chokidar.FSWatcher | null = null;
@@ -23,6 +25,15 @@ let currentConfig = {
   vaultPath: '',
   llamaUrl: 'http://127.0.0.1:8080'
 };
+
+// Load config from disk if exists
+try {
+  if (fs.existsSync(CONFIG_FILE)) {
+    const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+    currentConfig = { ...currentConfig, ...savedConfig };
+  }
+} catch(e) {}
+
 let logs: { timestamp: string, message: string, type: 'info' | 'error' | 'success' }[] = [];
 
 // Queue system to process one file at a time so we don't overload the local LLM
@@ -78,13 +89,15 @@ async function processFile(filePath: string) {
       try {
         const dataBuffer = await fsPromises.readFile(filePath);
         const pdfData = await pdfParse(dataBuffer);
-        textToProcess = pdfData.text.slice(0, 5000);
+        const text = pdfData.text;
+        textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
       } catch (err: any) {
         throw new Error(`Failed to parse PDF: ${err.message}`);
       }
     } else {
       originalContent = await fsPromises.readFile(filePath, 'utf-8');
-      textToProcess = originalContent.slice(0, 5000);
+      const text = originalContent;
+      textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
     }
     
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
@@ -175,9 +188,14 @@ ${textToProcess}
       return [];
     };
 
-    // Format tags as a valid YAML list
-    const parsedTags = formatArray(data.tags).map((t: string) => t.replace(/^#/, ''));
-    const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.join('\n  - ')}` : ' []';
+    // Format tags as a valid YAML list (with #)
+    const parsedTags = formatArray(data.tags).map((t: string) => {
+      let tag = String(t).trim().replace(/^#/, '');
+      tag = tag.replace(/\s+/g, '-');
+      return `#${tag}`;
+    });
+    // In YAML frontmatter, tags starting with # should be quoted if presented as a list, or we can just output them unquoted if we are careful, but quoting is safer to prevent YAML parsing errors
+    const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.map(t => `"${t}"`).join('\n  - ')}` : ' []';
     
     // Format other lists
     const formatList = (arr: any) => {
@@ -333,10 +351,15 @@ app.get('/api/config', (req, res) => {
   res.json(currentConfig);
 });
 
-app.post('/api/config', (req, res) => {
+app.post('/api/config', async (req, res) => {
   const { vaultPath, llamaUrl } = req.body;
   if (vaultPath !== undefined) currentConfig.vaultPath = vaultPath;
   if (llamaUrl !== undefined) currentConfig.llamaUrl = llamaUrl;
+  
+  try {
+    await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(currentConfig, null, 2));
+  } catch(e) {}
+  
   res.json({ success: true, config: currentConfig });
 });
 
