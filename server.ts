@@ -5,12 +5,8 @@ import fsPromises from 'fs/promises';
 import crypto from 'crypto';
 import chokidar from 'chokidar';
 import axios from 'axios';
-import { createRequire } from 'module';
-const req = typeof require !== 'undefined' ? require : createRequire(import.meta.url);
-const pdfParseModule = req('pdf-parse');
-const pdfParse = typeof pdfParseModule === 'function' ? pdfParseModule : (pdfParseModule.default || pdfParseModule);
-const mammothModule = req('mammoth');
-const mammoth = typeof mammothModule === 'function' ? mammothModule : (mammothModule.default || mammothModule);
+import pdfParse from 'pdf-parse';
+import mammoth from 'mammoth';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
