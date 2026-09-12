@@ -8,10 +8,12 @@ This system is fully autonomous. You drop a raw `.md` or `.txt` file into `00_In
 
 1. **Fully Local & Private**: No cloud APIs (OpenAI/Anthropic). Everything runs via a local `llama-server.exe` instance, preserving 100% data privacy.
 2. **Autonomous Obsidian Organization**: Automatically determines if a file is a Concept, Event, Meeting, Project, Idea, etc., and routes it to the corresponding Vault folder.
-3. **Resilient Queueing System**: Files dropped simultaneously are processed sequentially (1-by-1) preventing memory exhaustion or LLM overload.
-4. **Automated Vault Scaffolding**: Click a single button in the web dashboard to instantly generate a robust PARA folder structure and system files (MOCs, registries).
-5. **Fail-Safe Integrity**: If the model generates malformed JSON or times out, the pipeline applies fallback mechanisms to ensure files are safely moved into the knowledge base (flagged for review) rather than crashing or looping infinitely.
-6. **Robust File Handling**: Cross-device link fallbacks, zero-byte file protection, and Windows locked-file checking.
+3. **Intelligent Auto-linking**: Scans text for AI-extracted entities and projects, automatically wrapping them in `[[WikiLinks]]` to seamlessly connect your Knowledge Graph.
+4. **Daily Digest Generator**: Summarizes all notes processed today into a beautifully written daily journal entry via AI.
+5. **Interactive Analytics Dashboard**: Visualizes your vault's ingestion activity and content distribution directly in the web UI.
+6. **Resilient Queueing System**: Files dropped simultaneously are processed sequentially (1-by-1) preventing memory exhaustion or LLM overload.
+7. **Automated Vault Scaffolding**: Click a single button in the web dashboard to instantly generate a robust PARA folder structure and system files (MOCs, registries).
+8. **Fail-Safe Integrity & Attachment Linking**: Non-markdown files (PDFs, HTML, Python scripts) are preserved and linked. Collisions are handled gracefully with incremented filenames.
 
 ---
 

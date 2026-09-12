@@ -6,8 +6,8 @@ import crypto from 'crypto';
 import chokidar from 'chokidar';
 import axios from 'axios';
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse');
+const req = typeof require !== 'undefined' ? require : createRequire(import.meta.url);
+const pdfParse = req('pdf-parse');
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
@@ -207,9 +207,25 @@ tasks: [${formatList(data.tasks)}]
     let destResourcePath = '';
     let finalContent = frontmatter;
     
-    // For pure markdown/text files, we embed content directly.
+    let linkedContent = originalContent;
+    
+    // Auto-link entities and projects in text files
     if (['.md', '.txt'].includes(fileExtension)) {
-      finalContent += `\n${originalContent}`;
+      const terms = [...(data.entities || []), ...(data.projects || [])].filter(Boolean);
+      // Sort by length descending to replace longer terms first
+      terms.sort((a, b) => b.length - a.length);
+      
+      terms.forEach(term => {
+        if (term.length > 3) { // Only link meaningful words
+           try {
+             // Escape regex chars
+             const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+             const regex = new RegExp(`(?<!\\[\\[)\\b(${safeTerm})\\b(?!\\]\\])`, 'gi');
+             linkedContent = linkedContent.replace(regex, '[[$1]]');
+           } catch(e) {}
+        }
+      });
+      finalContent += `\n${linkedContent}`;
     } else {
       // For PDF, HTML, JSON, etc., copy the file as an attachment and link it.
       let resourceFilename = `${safeTitle.replace(/\s+/g, '_')}${fileExtension}`;
@@ -401,6 +417,94 @@ app.post('/api/init-vault', async (req, res) => {
   } catch (error: any) {
     addLog(`Error initializing vault: ${error.message}`, 'error');
     res.status(500).json({ error: 'Could not initialize vault structure' });
+  }
+});
+
+app.get('/api/registry', async (req, res) => {
+  if (!currentConfig.vaultPath) return res.json([]);
+  const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
+  if (fs.existsSync(registryPath)) {
+    try {
+      const regContent = await fsPromises.readFile(registryPath, 'utf-8');
+      res.json(JSON.parse(regContent));
+    } catch (e) {
+      res.json([]);
+    }
+  } else {
+    res.json([]);
+  }
+});
+
+app.post('/api/generate-digest', async (req, res) => {
+  if (!currentConfig.vaultPath) return res.status(400).json({ error: 'Vault path not set' });
+  const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
+  
+  if (!fs.existsSync(registryPath)) return res.status(400).json({ error: 'No files processed yet' });
+  
+  try {
+    const regContent = await fsPromises.readFile(registryPath, 'utf-8');
+    const registry = JSON.parse(regContent);
+    
+    // Get today's local date in YYYY-MM-DD
+    const todayStr = new Date().toLocaleDateString('sv-SE'); 
+    const todayItems = registry.filter((item: any) => item.processed_at && item.processed_at.startsWith(todayStr));
+    
+    if (todayItems.length === 0) return res.status(400).json({ error: 'No files processed today to summarize.' });
+    
+    addLog(`Generating daily digest for ${todayItems.length} items...`);
+    
+    let summaries = [];
+    for (const item of todayItems) {
+      try {
+        const filePath = path.join(currentConfig.vaultPath, item.destination);
+        const content = await fsPromises.readFile(filePath, 'utf-8');
+        const summaryMatch = content.match(/summary:\s*["']?([^"'\n]+)["']?/);
+        if (summaryMatch && summaryMatch[1]) {
+           summaries.push(`- ${path.basename(item.destination)} (${item.type}): ${summaryMatch[1]}`);
+        } else {
+           summaries.push(`- ${path.basename(item.destination)} (${item.type})`);
+        }
+      } catch (err) {}
+    }
+    
+    const prompt = `You are a helpful knowledge assistant. I have processed ${todayItems.length} notes today.
+Here is the list of notes and their summaries:
+${summaries.join('\n')}
+
+Write a concise "Daily Digest" journal entry summarizing what I focused on today, what types of concepts or projects I worked on, and any overarching themes. Format it in Markdown. Use a professional, reflective tone.`;
+
+    const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, {
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.4,
+        stream: false
+    }, { timeout: 120000 });
+    
+    const digestContent = response.data.choices[0].message.content;
+    const digestPath = path.join(currentConfig.vaultPath, '04_Journal', 'Daily', `${todayStr}-Digest.md`);
+    await fsPromises.mkdir(path.dirname(digestPath), { recursive: true });
+    
+    const finalFileContent = `---
+type: "journal"
+tags: ["daily-digest", "log"]
+date: "${todayStr}"
+---
+
+# Daily Digest: ${todayStr}
+
+${digestContent.trim()}
+`;
+
+    await fsPromises.writeFile(digestPath, finalFileContent);
+    addLog(`Created daily digest: 04_Journal/Daily/${todayStr}-Digest.md`, 'success');
+    res.json({ success: true, message: 'Digest created successfully' });
+    
+  } catch (err: any) {
+    if (err.code === 'ECONNREFUSED') {
+       addLog(`LLM Server is not running. Start it to generate digests.`, 'error');
+       return res.status(500).json({ error: 'LLM Server not running.' });
+    }
+    addLog(`Digest error: ${err.message}`, 'error');
+    res.status(500).json({ error: 'Failed to generate digest: ' + err.message });
   }
 });
 

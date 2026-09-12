@@ -4,8 +4,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Settings, FileText, Activity, AlertCircle, Folder, Loader2 } from 'lucide-react';
+import { Play, Square, Settings, FileText, Activity, AlertCircle, Folder, Loader2, BarChart2, LayoutDashboard } from 'lucide-react';
 import axios from 'axios';
+import Analytics from './components/Analytics';
 
 type LogEntry = {
   timestamp: string;
@@ -19,6 +20,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics'>('dashboard');
 
   useEffect(() => {
     fetchStatus();
@@ -140,22 +142,46 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-8 py-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+      <main className="max-w-5xl mx-auto px-8 py-8">
         
-        {/* Left Col - Settings */}
-        <div className="md:col-span-1 space-y-6">
-          <section className="bg-white rounded-2xl border border-neutral-200 p-6">
-            <div className="flex items-center gap-2 mb-6">
-              <Settings className="w-5 h-5 text-neutral-400" />
-              <h2 className="text-sm font-semibold text-neutral-900">Configuration</h2>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1.5">Obsidian Vault Absolute Path</label>
-                <input 
-                  type="text" 
-                  value={config.vaultPath}
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-4 border-b border-neutral-200 mb-8 pb-px">
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex items-center gap-2 pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'dashboard' ? 'border-neutral-900 text-neutral-900' : 'border-transparent text-neutral-500 hover:text-neutral-700'
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            Dashboard
+          </button>
+          <button
+            onClick={() => setActiveTab('analytics')}
+            className={`flex items-center gap-2 pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'analytics' ? 'border-neutral-900 text-neutral-900' : 'border-transparent text-neutral-500 hover:text-neutral-700'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            Analytics & Reports
+          </button>
+        </div>
+
+        {activeTab === 'dashboard' ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Left Col - Settings */}
+            <div className="md:col-span-1 space-y-6">
+              <section className="bg-white rounded-2xl border border-neutral-200 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <Settings className="w-5 h-5 text-neutral-400" />
+                  <h2 className="text-sm font-semibold text-neutral-900">Configuration</h2>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-500 mb-1.5">Obsidian Vault Absolute Path</label>
+                    <input 
+                      type="text" 
+                      value={config.vaultPath}
                   onChange={(e) => setConfig({...config, vaultPath: e.target.value})}
                   placeholder="e.g. D:/Obsidian/Vault"
                   className="w-full bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
@@ -250,7 +276,10 @@ export default function App() {
             </div>
           </section>
         </div>
-
+      </div>
+      ) : (
+        <Analytics />
+      )}
       </main>
     </div>
   );
