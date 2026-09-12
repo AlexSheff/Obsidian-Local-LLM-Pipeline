@@ -9,6 +9,8 @@ import { createRequire } from 'module';
 const req = typeof require !== 'undefined' ? require : createRequire(import.meta.url);
 const pdfParseModule = req('pdf-parse');
 const pdfParse = typeof pdfParseModule === 'function' ? pdfParseModule : (pdfParseModule.default || pdfParseModule);
+const mammothModule = req('mammoth');
+const mammoth = typeof mammothModule === 'function' ? mammothModule : (mammothModule.default || mammothModule);
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
@@ -68,8 +70,9 @@ async function processFile(filePath: string) {
   // Categorize file extensions
   const textExtensions = ['.md', '.txt', '.csv', '.rtf', '.html', '.json', '.xml', '.py', '.js', '.ts', '.yaml', '.yml'];
   const pdfExtensions = ['.pdf'];
+  const docxExtensions = ['.docx'];
   
-  if (!textExtensions.includes(fileExtension) && !pdfExtensions.includes(fileExtension) && fileExtension !== '') {
+  if (!textExtensions.includes(fileExtension) && !pdfExtensions.includes(fileExtension) && !docxExtensions.includes(fileExtension) && fileExtension !== '') {
     addLog(`Skipped unsupported file type: ${originalFilename}`);
     return;
   }
@@ -93,6 +96,15 @@ async function processFile(filePath: string) {
         textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
       } catch (err: any) {
         throw new Error(`Failed to parse PDF: ${err.message}`);
+      }
+    } else if (docxExtensions.includes(fileExtension)) {
+      try {
+        const result = await mammoth.extractRawText({ path: filePath });
+        const text = result.value;
+        originalContent = text; // Save it so we can include it in the markdown block if needed, though for docx we usually attach it
+        textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
+      } catch (err: any) {
+        throw new Error(`Failed to parse DOCX: ${err.message}`);
       }
     } else {
       originalContent = await fsPromises.readFile(filePath, 'utf-8');
