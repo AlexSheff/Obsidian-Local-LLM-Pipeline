@@ -60,14 +60,14 @@ D:\Obsidian\User_Vault\
 ## Installation & Setup
 
 ### Requirements
-- **Windows 10/11**
+- **Windows 10/11, Linux (Ubuntu/Debian), or macOS**
 - **Node.js** (v18+ recommended)
 - *(No need for external LLM apps! The installer handles downloading the required engine and models)*
 
 ### Recommended Model
 The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model. It's incredibly fast (even on CPUs) and executes JSON-schema instructions flawlessly.
 
-### Setup Instructions
+### Setup Instructions (Windows)
 
 1. **Extract the Pipeline**: Extract the downloaded ZIP to a dedicated folder (e.g., `C:\Hermes-Pipeline`).
 2. **Install & Download**: Double-click `install.bat`. 
@@ -76,6 +76,19 @@ The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model
 3. **Launch**: Double-click `start.bat`. 
     - This will spin up the local AI server in a secondary terminal window.
     - It will automatically launch the Hermes Web Dashboard (`http://localhost:3000`) in your browser.
+
+### Setup Instructions (Linux / macOS)
+
+1. **Extract the Pipeline**: Unzip the repository into your preferred directory.
+2. **Make Scripts Executable**: Open your terminal in the directory and run:
+   ```bash
+   chmod +x install.sh start.sh
+   ```
+3. **Install & Download**: Run `./install.sh`.
+    - This installs Node.js packages and uses `unzip` to automatically fetch the correct `llama.cpp` binary and AI model for your platform. *(Ensure you have `unzip` installed via `apt` or `brew`)*.
+4. **Launch**: Run `./start.sh`.
+    - The LLM server will start in the background (logs in `/llm/server.log`).
+    - The Node backend will start, and the dashboard will be available at `http://localhost:3000`.
 
 ---
 

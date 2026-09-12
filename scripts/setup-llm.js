@@ -12,7 +12,11 @@ const MODEL_DIR = path.join(LLM_DIR, 'models');
 const MODEL_FILE = 'Hermes-3-Llama-3.2-3B.Q4_K_M.gguf';
 const MODEL_URL = 'https://huggingface.co/NousResearch/Hermes-3-Llama-3.2-3B-GGUF/resolve/main/Hermes-3-Llama-3.2-3B.Q4_K_M.gguf';
 
-const EXE_NAME = 'llama-server.exe';
+const isWin = process.platform === 'win32';
+const isMac = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
+
+const EXE_NAME = isWin ? 'llama-server.exe' : 'llama-server';
 
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
@@ -60,7 +64,7 @@ function downloadFile(url, dest) {
 
 async function setupLlamaCpp() {
   if (fs.existsSync(path.join(BIN_DIR, EXE_NAME))) {
-    console.log('[OK] llama-server.exe already installed.');
+    console.log(`[OK] ${EXE_NAME} already installed.`);
     return;
   }
   
@@ -77,31 +81,50 @@ async function setupLlamaCpp() {
   const validRelease = releaseInfo.find(r => r.assets && r.assets.length > 5);
   if (!validRelease) throw new Error('Could not find a valid release for llama.cpp');
   
-  const asset = validRelease.assets.find(a => a.name.includes('win-cpu-x64.zip') || a.name.includes('win-avx2-x64.zip'));
-  if (!asset) throw new Error('Could not find Windows CPU binary asset in the release.');
+  let assetNameQuery = 'ubuntu-x64.zip'; // Linux fallback
+  if (isWin) assetNameQuery = 'win-cpu-x64.zip';
+  if (isMac) assetNameQuery = 'macos-x64.zip'; // Just an approximation, but macOS is usually handled via brew
+  
+  const asset = validRelease.assets.find(a => {
+     if (isWin) return a.name.includes('win-cpu-x64.zip') || a.name.includes('win-avx2-x64.zip');
+     if (isMac) return a.name.includes('macos') && a.name.endsWith('.zip');
+     return a.name.includes('ubuntu') && a.name.endsWith('.zip'); // Linux
+  });
+
+  if (!asset) {
+      console.log(`[WARNING] Could not find precompiled binaries for ${process.platform}.`);
+      console.log('You may need to compile llama.cpp from source or install via your package manager.');
+      return;
+  }
   
   const zipPath = path.join(LLM_DIR, 'llama-temp.zip');
   console.log(`Downloading llama.cpp (${asset.name})...`);
   await downloadFile(asset.browser_download_url, zipPath);
   
   console.log('Extracting llama.cpp...');
-  // Use powershell to extract the zip file
-  execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${BIN_DIR}' -Force"`);
+  if (isWin) {
+      execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${BIN_DIR}' -Force"`);
+  } else {
+      try {
+          execSync(`unzip -o '${zipPath}' -d '${BIN_DIR}'`);
+      } catch (e) {
+          console.log('[ERROR] Unzip failed. Make sure "unzip" is installed on your system.');
+          throw e;
+      }
+  }
   
   // Clean up zip
   fs.unlinkSync(zipPath);
   
-  // Ensure the exe is exactly where we expect it
-  const extractedDir = fs.readdirSync(BIN_DIR).find(f => fs.statSync(path.join(BIN_DIR, f)).isDirectory());
-  if (extractedDir) {
-    // The zip usually extracts flat, but if it has a subfolder, we should move it out
-    // Recent versions extract flat, so llama-server.exe should be directly in BIN_DIR
+  // Make binary executable on unix
+  if (!isWin && fs.existsSync(path.join(BIN_DIR, EXE_NAME))) {
+      execSync(`chmod +x '${path.join(BIN_DIR, EXE_NAME)}'`);
   }
   
   if (fs.existsSync(path.join(BIN_DIR, EXE_NAME))) {
-    console.log('[SUCCESS] llama-server.exe installed successfully!');
+    console.log(`[SUCCESS] ${EXE_NAME} installed successfully!`);
   } else {
-    console.log('[WARNING] llama-server.exe might be in a subfolder. Check your /llm/bin folder.');
+    console.log(`[WARNING] ${EXE_NAME} might be in a subfolder. Check your /llm/bin folder.`);
   }
 }
 
