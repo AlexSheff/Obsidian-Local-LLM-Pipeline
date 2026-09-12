@@ -1,6 +1,6 @@
-# Hermes Local Intelligence Pipeline
+# Obsidian Local LLM Pipeline
 
-Hermes is an automated, completely local intelligence pipeline designed to ingest, analyze, and categorize raw notes into a strictly formatted PARA (Projects, Areas, Resources, Archives) / Zettelkasten knowledge base using a local LLM via `llama.cpp`.
+Hermes is an automated, **Zero-Config**, completely local intelligence pipeline designed to ingest, analyze, and categorize raw notes into a strictly formatted PARA (Projects, Areas, Resources, Archives) / Zettelkasten knowledge base using a local LLM via `llama.cpp`.
 
 This system is fully autonomous. You drop a raw `.md` or `.txt` file into `00_Inbox`, and Hermes will use AI to read the content, generate a highly structured YAML frontmatter (with summary, tags, entities, related projects), move the file to its correct semantic location, and preserve the original hashed file in a system archive.
 
@@ -60,24 +60,19 @@ D:\Obsidian\User_Vault\
 ### Requirements
 - **Windows 10/11**
 - **Node.js** (v18+ recommended)
-- **LM Studio** (or `llama.cpp` CLI) installed with a CPU/GPU server executable.
+- *(No need for external LLM apps! The installer handles downloading the required engine and models)*
 
 ### Recommended Model
-To ensure speed (especially on CPU) without sacrificing instruction-following quality, we highly recommend:
-- `Hermes-3-Llama-3.2-3B.Q4_K_M.gguf`
-- `Qwen2.5-3B-Instruct-Q4_K_M.gguf`
+The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model. It's incredibly fast (even on CPUs) and executes JSON-schema instructions flawlessly.
 
 ### Setup Instructions
 
 1. **Extract the Pipeline**: Extract the downloaded ZIP to a dedicated folder (e.g., `C:\Hermes-Pipeline`).
-2. **Install Dependencies**: Double-click `install.bat`. This script will check for Node.js, install necessary npm packages (`axios`, `chokidar`, `express`, etc.), and build the React dashboard.
-3. **Configure the AI Server Path**:
-    - Open `start.bat` in Notepad.
-    - Locate the line starting the `llama-server`.
-    - Modify the path to your `llama-server.exe` and the `-m` argument to point to your specific `.gguf` model file.
-    - *Note*: The context window is intentionally limited (`-c 2048`) to ensure it runs comfortably on machines with standard RAM without throwing buffer allocation errors.
-4. **Launch**: Double-click `start.bat`. 
-    - This will spin up the `llama-server` in a secondary terminal window.
+2. **Install & Download**: Double-click `install.bat`. 
+    - This script will install necessary Node.js packages.
+    - It will automatically download the `llama.cpp` Windows CPU Server and the `Hermes-3` AI model (~2GB) into the `/llm/` directory.
+3. **Launch**: Double-click `start.bat`. 
+    - This will spin up the local AI server in a secondary terminal window.
     - It will automatically launch the Hermes Web Dashboard (`http://localhost:3000`) in your browser.
 
 ---

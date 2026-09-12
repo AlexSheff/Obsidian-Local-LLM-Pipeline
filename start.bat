@@ -1,11 +1,14 @@
 @echo off
+setlocal
+cd /d "%~dp0"
+
 echo ===================================================
 echo   Hermes Local Intelligence - Startup Script
 echo ===================================================
 echo.
 
 echo [1/3] Starting Llama 3.1 Server in a new window...
-start "Hermes Llama Server" cmd /k "C:\Users\admin_fdr\.llama_setup\cpu\llama-server.exe -m E:\AI_text\lm_studio\NousResearch\Hermes-3-Llama-3.2-3B-GGUF\Hermes-3-Llama-3.2-3B.Q4_K_M.gguf -c 2048 -ngl -1"
+start "Hermes Llama Server" cmd /k ".\llm\bin\llama-server.exe -m .\llm\models\Hermes-3-Llama-3.2-3B.Q4_K_M.gguf -c 2048 -ngl -1"
 
 echo [2/3] Waiting 5 seconds for the AI model to load...
 timeout /t 5 /nobreak > nul
