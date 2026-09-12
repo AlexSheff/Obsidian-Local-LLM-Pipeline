@@ -72,7 +72,7 @@ The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model
 1. **Extract the Pipeline**: Extract the downloaded ZIP to a dedicated folder (e.g., `C:\Hermes-Pipeline`).
 2. **Install & Download**: Double-click `install.bat`. 
     - This script will install necessary Node.js packages.
-    - It will automatically download the `llama.cpp` Windows CPU Server and the `Hermes-3` AI model (~2GB) into the `/llm/` directory.
+    - It will automatically download the `llama.cpp` Windows CPU Server and the `Hermes-3` AI model (~2GB) into the `/llm/` directory. *(Note: If you already have the model or engine downloaded in the `/llm/` folder, the installer is smart enough to detect them and instantly skip the download phase).*
 3. **Launch**: Double-click `start.bat`. 
     - This will spin up the local AI server in a secondary terminal window.
     - It will automatically launch the Hermes Web Dashboard (`http://localhost:3000`) in your browser.
@@ -85,7 +85,7 @@ The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model
    chmod +x install.sh start.sh
    ```
 3. **Install & Download**: Run `./install.sh`.
-    - This installs Node.js packages and uses `unzip` to automatically fetch the correct `llama.cpp` binary and AI model for your platform. *(Ensure you have `unzip` installed via `apt` or `brew`)*.
+    - This installs Node.js packages and uses `unzip` to automatically fetch the correct `llama.cpp` binary and AI model for your platform. *(Note: Just like on Windows, if the models are already present in `/llm/`, the download is skipped).*
 4. **Launch**: Run `./start.sh`.
     - The LLM server will start in the background (logs in `/llm/server.log`).
     - The Node backend will start, and the dashboard will be available at `http://localhost:3000`.
