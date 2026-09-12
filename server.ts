@@ -96,7 +96,12 @@ async function processFile(filePath: string) {
       }
     } else {
       originalContent = await fsPromises.readFile(filePath, 'utf-8');
-      const text = originalContent;
+      let text = originalContent;
+      
+      if (fileExtension === '.html' || fileExtension === '.xml') {
+        text = text.replace(/<[^>]*>?/gm, '\n').replace(/\n\s*\n/g, '\n').trim();
+      }
+      
       textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
     }
     
@@ -340,6 +345,47 @@ tasks: ${formatList(data.tasks)}
     });
     
     await fsPromises.writeFile(registryPath, JSON.stringify(registry, null, 2));
+    
+    // Auto-update MOCs
+    try {
+      const mocsDir = path.join(currentConfig.vaultPath, '00_MOC');
+      const link = `[[${mdFilename.replace('.md', '')}]]`;
+      
+      // Topics/Knowledge MOC
+      if (destFolder.includes('03_Knowledge')) {
+        const mocTopicsPath = path.join(mocsDir, 'moc_topics.md');
+        if (fs.existsSync(mocTopicsPath)) {
+          await fsPromises.appendFile(mocTopicsPath, `\n- ${link} - ${data.summary || ''}`);
+        }
+      }
+      
+      // Projects MOC
+      if (destFolder.includes('01_Projects')) {
+        const mocProjectsPath = path.join(mocsDir, 'moc_projects.md');
+        if (fs.existsSync(mocProjectsPath)) {
+          await fsPromises.appendFile(mocProjectsPath, `\n- ${link} - ${data.summary || ''}`);
+        }
+      }
+      
+      // People MOC
+      if (destFolder.includes('02_Areas') && semanticType === 'person') {
+        const mocPeoplePath = path.join(mocsDir, 'moc_people.md');
+        if (fs.existsSync(mocPeoplePath)) {
+          await fsPromises.appendFile(mocPeoplePath, `\n- ${link} - ${data.summary || ''}`);
+        }
+      }
+      
+      // Tags MOC (aggregate new tags)
+      if (parsedTags && parsedTags.length > 0) {
+        const mocTagsPath = path.join(mocsDir, 'moc_tags.md');
+        if (fs.existsSync(mocTagsPath)) {
+          const newTags = parsedTags.map(t => `- ${t} => ${link}`).join('\n');
+          await fsPromises.appendFile(mocTagsPath, `\n${newTags}`);
+        }
+      }
+    } catch(mocErr) {
+       addLog(`Failed to update MOCs: ${mocErr.message}`, 'error');
+    }
     
   } catch (error: any) {
     addLog(`Error processing ${filePath}: ${error.message}`, 'error');
