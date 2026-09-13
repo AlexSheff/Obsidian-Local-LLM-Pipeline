@@ -8,6 +8,7 @@ import axios from 'axios';
 import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 import { createServer as createViteServer } from 'vite';
+import { convert } from 'html-to-text';
 
 // Handle pdf-parse default export issue
 const pdfParse = (pdfParseModule as any).default || pdfParseModule;
@@ -114,6 +115,11 @@ async function processFile(filePath: string) {
         // Attempt to clean encoding artifacts/weird chars if any
         let text = originalContent.replace(/\uFFFD/g, ''); 
         
+        // Strip existing frontmatter from markdown files so it doesn't get duplicated
+        if (fileExtension === '.md') {
+          text = text.replace(/^---\n[\s\S]*?\n---\n*/, '');
+        }
+        
         if (fileExtension === '.json') {
           try {
             const parsed = JSON.parse(text);
@@ -134,25 +140,26 @@ async function processFile(filePath: string) {
             // Ignore parse errors, just use the raw text
           }
         } else if (fileExtension === '.html' || fileExtension === '.xml') {
-          // Remove XML declaration and DOCTYPE
-          text = text.replace(/<\?xml.*?\?>/gi, '');
-          text = text.replace(/<!DOCTYPE.*?>/gi, '');
-          // Remove scripts and styles
-          text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-          text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
-          // Replace common block tags with newlines
-          text = text.replace(/<(br|p|div|li|h[1-6])[^>]*>/gi, '\n');
-          // Remove all remaining tags
-          text = text.replace(/<[^>]+>/g, '');
-          // Decode basic HTML entities and decimal/hex numeric entities
-          text = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-          text = text.replace(/&#(\d+);/g, (m, d) => String.fromCharCode(d));
-          text = text.replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCharCode(parseInt(h, 16)));
-          // Collapse multiple newlines
-          text = text.replace(/\n\s*\n/g, '\n\n').trim();
+          try {
+            let cleanHtml = text.replace(/<\?xml.*?\?>/gi, '').replace(/<!DOCTYPE.*?>/gi, '');
+            text = convert(cleanHtml, {
+              wordwrap: 130,
+              selectors: [
+                { selector: 'a', options: { ignoreHref: true } },
+                { selector: 'img', format: 'skip' }
+              ]
+            });
+          } catch (e) {
+            addLog(`html-to-text failed, using basic cleanup.`, 'error');
+            text = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
+          }
         }
         
-        textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
+        if (text.length <= 15000) {
+          textToProcess = text;
+        } else {
+          textToProcess = text.slice(0, 5000) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(Math.floor(text.length/2)-1000, Math.floor(text.length/2)+1000) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(-5000);
+        }
       } catch (err: any) {
         addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
         textToProcess = `[Error reading text file. Please classify based on the file name: ${originalFilename}]`;
@@ -162,24 +169,26 @@ async function processFile(filePath: string) {
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
     
     const prompt = `
-You are an expert system that extracts information from notes and categorizes them into a PARA structure.
-Read the following text and extract exactly 12 fields in strict JSON format. 
+You are an expert system that extracts information from notes and categorizes them into a structured schema.
+Read the following text and extract exactly 14 fields in strict JSON format.
 Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
 
 The required fields are:
 1. "title" (string): A short, clear title for the document.
 2. "document_type" (string): MUST be one of:
    - "resume", "profile", "contact", "book", "literature", "story", "scenario", "script", "short_film", "essay", "article", "document", "quote", "phrase", "idea", "concept", "note", "research", "tutorial", "list", "reference", "whitepaper", "specification", "technical_document", "journal", "meeting", "event", "dialogue", "transcript", "correspondence", "project_document", "archive", "unknown"
-3. "primary_entity" (string or null): If the document is fundamentally ABOUT a specific person, organization, or place (e.g. a Resume is about a Person), specify it here as "person", "organization", "place", or "entity". Otherwise null.
-4. "summary" (string): A brief summary of the content.
-5. "tags" (array of strings): List of tags without the '#' symbol.
-6. "entities" (array of strings): List of people, orgs, or places mentioned.
-7. "projects" (array of strings): List of related projects.
-8. "tasks" (array of strings): List of actionable tasks identified.
-9. "key_points" (array of strings): 3-5 key points extracted.
-10. "confidence" (number): Float between 0.0 and 1.0 indicating how confident you are in this classification.
-11. "alternative_classes" (array of objects): Up to 2 alternatives if uncertain, format: [{"class": "type", "score": 0.8}].
-12. "decision" (string): "ACCEPT" if confidence > 0.7, otherwise "REVIEW".
+3. "primary_entity_type" (string or null): If the document is fundamentally ABOUT a specific person, organization, place, book, or project, specify it here (e.g., "person", "organization", "place", "book", "project"). Otherwise null.
+4. "primary_entity_name" (string or null): The exact name of that primary entity (e.g., "John Smith", "Apple Inc"). Otherwise null.
+5. "summary" (string): A brief summary of the content.
+6. "tags" (array of strings): List of tags without the '#' symbol.
+7. "entities" (array of strings): List of people, orgs, or places mentioned.
+8. "projects" (array of strings): List of related projects.
+9. "tasks" (array of strings): List of actionable tasks identified.
+10. "relationships" (array of strings): Key connections identified (e.g. "John Smith works at Apple").
+11. "key_points" (array of strings): 3-5 key points extracted.
+12. "evidence" (string): Briefly explain why you classified this document_type and primary_entity.
+13. "scores" (object): Provide three float scores (0.0 to 1.0): {"semantic": 0.9, "structural": 0.8, "entity": 0.9}.
+14. "alternative_classes" (array of objects): Up to 2 alternatives if uncertain, format: [{"class": "type", "score": 0.8}].
 
 Text:
 ${textToProcess}
@@ -207,6 +216,12 @@ ${textToProcess}
     if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```/, '');
     if (jsonStr.endsWith('```')) jsonStr = jsonStr.replace(/```$/, '');
     
+    // Attempt to extract just the JSON object to avoid trailing text errors
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    }
+    
     let data: any = {};
     try {
       data = JSON.parse(jsonStr.trim());
@@ -214,32 +229,67 @@ ${textToProcess}
       addLog(`JSON Parse failed for ${originalFilename}: ${parseError.message}. Using fallback.`, 'error');
       // Fallback behavior
       const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]+)"/i);
+      const typeMatch = jsonStr.match(/"document_type"\s*:\s*"([^"]+)"/i);
+      const entityMatch = jsonStr.match(/"primary_entity_type"\s*:\s*"([^"]+)"/i);
+      const entityNameMatch = jsonStr.match(/"primary_entity_name"\s*:\s*"([^"]+)"/i);
+      
       data = {
         title: titleMatch ? titleMatch[1] : originalFilename.replace(/\.[^/.]+$/, ""),
-        document_type: 'unknown',
-        primary_entity: null,
+        document_type: typeMatch ? typeMatch[1] : 'unknown',
+        primary_entity_type: entityMatch ? entityMatch[1] : null,
+        primary_entity_name: entityNameMatch ? entityNameMatch[1] : null,
         summary: 'Automatic fallback due to model parsing error or incomplete generation.',
         tags: ['processing_error'],
         key_points: [],
         entities: [],
         projects: [],
         tasks: [],
-        confidence: 0,
-        alternative_classes: [],
-        decision: 'REVIEW'
+        relationships: [],
+        scores: { semantic: 0, structural: 0, entity: 0 },
+        alternative_classes: []
       };
     }
     
+    // Application-level decision logic
+    const semScore = data.scores?.semantic || 0;
+    const structScore = data.scores?.structural || 0;
+    const entScore = data.scores?.entity || 0;
+    const finalScore = (semScore + structScore + entScore) / 3;
+    
+    let margin = finalScore;
+    if (data.alternative_classes && data.alternative_classes.length > 0) {
+       const altScore = data.alternative_classes[0].score || 0;
+       margin = finalScore - altScore;
+    }
+    
+    let decision = 'REVIEW';
+    if (finalScore > 0.7 && margin > 0.1) decision = 'ACCEPT';
+    
+    data.confidence = finalScore;
+    data.decision = decision;
+    
     const semanticType = data.document_type?.toLowerCase() || 'unknown';
-    const primaryEntity = data.primary_entity?.toLowerCase() || null;
+    const primaryType = data.primary_entity_type?.toLowerCase() || null;
+    const primaryName = data.primary_entity_name || null;
     let destFolder = path.join('03_Knowledge', 'Topics'); // default
     
-    if (data.decision === 'REVIEW') {
+    // Entity Resolution & Naming Hint
+    let overrideFileName = null;
+    if (primaryType && primaryName && primaryName.length > 1) {
+       let safeEntityName = primaryName.replace(/[\\/:*?"<>|]/g, '').trim().replace(/\s+/g, ' ');
+       if (safeEntityName) {
+         overrideFileName = `${safeEntityName}.md`;
+       }
+    }
+    
+    if (decision === 'REVIEW') {
       destFolder = path.join('00_Inbox', 'Review');
-    } else if (['person', 'organization', 'place', 'entity'].includes(primaryEntity)) {
-      if (primaryEntity === 'person') destFolder = path.join('02_Areas', 'People');
-      else if (primaryEntity === 'organization') destFolder = path.join('02_Areas', 'Organizations');
-      else if (primaryEntity === 'place') destFolder = path.join('02_Areas', 'Places');
+    } else if (['person', 'organization', 'place', 'entity', 'book', 'project'].includes(primaryType)) {
+      if (primaryType === 'person') destFolder = path.join('02_Areas', 'People');
+      else if (primaryType === 'organization') destFolder = path.join('02_Areas', 'Organizations');
+      else if (primaryType === 'place') destFolder = path.join('02_Areas', 'Places');
+      else if (primaryType === 'book') destFolder = path.join('03_Knowledge', 'Books');
+      else if (primaryType === 'project') destFolder = path.join('01_Projects', 'Active');
       else destFolder = path.join('02_Areas', 'Entities');
     } else {
       if (['project', 'plan', 'task', 'project_document'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
@@ -285,14 +335,17 @@ ${textToProcess}
     const frontmatter = `---
 title: "${(data.title || 'Untitled').replace(/"/g, '\\"')}"
 document_type: ${data.document_type || 'unknown'}
-primary_entity: ${data.primary_entity || 'null'}
+primary_entity_type: ${data.primary_entity_type || 'null'}
+primary_entity_name: ${data.primary_entity_name || 'null'}
 tags:${tagsYaml}
 summary: "${(data.summary || '').replace(/"/g, '\\"')}"
 key_points: ${formatList(data.key_points)}
 entities: ${formatList(data.entities)}
 projects: ${formatList(data.projects)}
 tasks: ${formatList(data.tasks)}
+relationships: ${formatList(data.relationships)}
 confidence: ${data.confidence || 0}
+margin: ${margin || 0}
 decision: ${data.decision || 'REVIEW'}
 ---
 `;
@@ -302,13 +355,13 @@ decision: ${data.decision || 'REVIEW'}
     safeTitle = safeTitle.replace(/\s+/g, ' ');
     if (!safeTitle) safeTitle = 'Untitled_Document';
     
-    let mdFilename = `${safeTitle}.md`;
+    let mdFilename = overrideFileName || `${safeTitle}.md`;
     let destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
     
     // Handle name collisions for the markdown file
     let counter = 1;
     while (fs.existsSync(destMdPath)) {
-        mdFilename = `${safeTitle} ${counter}.md`;
+        mdFilename = overrideFileName ? `${overrideFileName.replace('.md', '')} ${counter}.md` : `${safeTitle} ${counter}.md`;
         destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
         counter++;
     }
@@ -416,7 +469,16 @@ decision: ${data.decision || 'REVIEW'}
       hash,
       original_path: `00_Inbox/${originalFilename}`,
       destination: `${destFolder}/${mdFilename}`,
-      type: semanticType,
+      document_type: semanticType,
+      primary_entity_type: primaryType,
+      primary_entity_name: primaryName,
+      entities: data.entities || [],
+      projects: data.projects || [],
+      confidence: data.confidence || 0,
+      scores: data.scores || {},
+      margin: margin || 0,
+      decision: data.decision || 'REVIEW',
+      pipeline_version: '2.0',
       processed_at: new Date().toISOString()
     });
     
@@ -444,7 +506,7 @@ decision: ${data.decision || 'REVIEW'}
       }
       
       // People MOC
-      if (destFolder.includes('02_Areas') && semanticType === 'person') {
+      if (destFolder.includes('02_Areas') && (semanticType === 'person' || primaryType === 'person')) {
         const mocPeoplePath = path.join(mocsDir, 'moc_people.md');
         if (fs.existsSync(mocPeoplePath)) {
           await fsPromises.appendFile(mocPeoplePath, `\n- ${link} - ${data.summary || ''}`);
@@ -505,12 +567,18 @@ app.post('/api/start', async (req, res) => {
   addLog(`Started watching ${inboxPath}`, 'success');
   
   watcher = chokidar.watch(inboxPath, {
-    ignored: /(^|[\\/])\\../,
+    ignored: [
+      /(^|[\\/])\\../,
+      (testPath: string) => testPath.includes(path.sep + 'Review') || testPath.includes('/Review') || testPath.includes('\\Review')
+    ],
     persistent: true,
     awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 }
   });
   
   watcher.on('add', (filePath) => {
+    // Double check to prevent loops
+    if (filePath.includes('/Review/') || filePath.includes('\\Review\\')) return;
+    
     fileQueue.push(filePath);
     processQueue();
   });
