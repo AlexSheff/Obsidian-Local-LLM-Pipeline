@@ -91,31 +91,38 @@ async function processFile(filePath: string) {
       try {
         const dataBuffer = await fsPromises.readFile(filePath);
         const pdfData = await pdfParse(dataBuffer);
-        const text = pdfData.text;
+        const text = pdfData.text || '';
         textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
       } catch (err: any) {
-        throw new Error(`Failed to parse PDF: ${err.message}`);
+        addLog(`Failed to parse PDF: ${err.message}. Falling back to filename classification.`, 'error');
+        textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
       }
     } else if (docxExtensions.includes(fileExtension)) {
       try {
         const result = await mammoth.extractRawText({ path: filePath });
-        const text = result.value;
+        const text = result.value || '';
         originalContent = text; // Save it so we can include it in the markdown block if needed, though for docx we usually attach it
         textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
       } catch (err: any) {
-        throw new Error(`Failed to parse DOCX: ${err.message}`);
+        addLog(`Failed to parse DOCX: ${err.message}. Falling back to filename classification.`, 'error');
+        textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
       }
     } else {
-      originalContent = await fsPromises.readFile(filePath, 'utf-8');
-      
-      // Attempt to clean encoding artifacts/weird chars if any
-      let text = originalContent.replace(/\uFFFD/g, ''); 
-      
-      if (fileExtension === '.html' || fileExtension === '.xml') {
-        text = text.replace(/<[^>]*>?/gm, '\n').replace(/\n\s*\n/g, '\n').trim();
+      try {
+        originalContent = await fsPromises.readFile(filePath, 'utf-8');
+        
+        // Attempt to clean encoding artifacts/weird chars if any
+        let text = originalContent.replace(/\uFFFD/g, ''); 
+        
+        if (fileExtension === '.html' || fileExtension === '.xml') {
+          text = text.replace(/<[^>]*>?/gm, '\n').replace(/\n\s*\n/g, '\n').trim();
+        }
+        
+        textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
+      } catch (err: any) {
+        addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
+        textToProcess = `[Error reading text file. Please classify based on the file name: ${originalFilename}]`;
       }
-      
-      textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
     }
     
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
@@ -128,10 +135,12 @@ Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
 The required fields are:
 1. "title" (string): A short, clear title for the document.
 2. "type" (string): MUST be one of the following exact strings:
-   - "person", "contact" (for people, contacts, character profiles)
+   - "person", "contact", "resume", "profile" (for people, contacts, character profiles, resumes, CVs)
    - "organization", "place", "entity" (for companies, locations, generic entities)
    - "project", "plan", "task" (for actionable projects or plans)
+   - "book", "literature" (for books, novels, literature)
    - "story", "scenario", "script", "short_film", "essay", "article", "document" (for creative writing, scripts, and texts)
+   - "quote", "phrase" (for quotes, memorable phrases, short sayings)
    - "idea", "concept", "note", "research", "tutorial", "list" (for general knowledge)
    - "reference", "whitepaper", "specification", "technical_document" (for technical references)
    - "journal", "meeting", "event", "dialogue", "transcript", "correspondence" (for time-based logs and conversations)
@@ -178,13 +187,13 @@ ${textToProcess}
       const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]+)"/i);
       data = {
         title: titleMatch ? titleMatch[1] : originalFilename.replace(/\.[^/.]+$/, ""),
-        type: 'knowledge_topic',
-        summary: 'Automatic fallback due to model parsing error.',
-        tags: 'processing_error',
-        key_points: '',
-        entities: '',
-        projects: '',
-        tasks: ''
+        type: 'unknown',
+        summary: 'Automatic fallback due to model parsing error or incomplete generation.',
+        tags: ['processing_error'],
+        key_points: [],
+        entities: [],
+        projects: [],
+        tasks: []
       };
     }
     
@@ -192,14 +201,17 @@ ${textToProcess}
     let destFolder = path.join('03_Knowledge', 'Topics'); // default
     
     if (['project', 'plan', 'task'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
-    else if (['person', 'contact'].includes(semanticType)) destFolder = path.join('02_Areas', 'People');
+    else if (['person', 'contact', 'resume', 'profile'].includes(semanticType)) destFolder = path.join('02_Areas', 'People');
     else if (semanticType === 'organization') destFolder = path.join('02_Areas', 'Organizations');
     else if (semanticType === 'place') destFolder = path.join('02_Areas', 'Places');
     else if (semanticType === 'entity') destFolder = path.join('02_Areas', 'Entities');
     else if (semanticType === 'concept') destFolder = path.join('03_Knowledge', 'Concepts');
+    else if (['book', 'literature'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Books');
+    else if (['quote', 'phrase'].includes(semanticType)) destFolder = path.join('05_Ideas', 'Quotes');
+    else if (['dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Transcripts');
     else if (['topic', 'note', 'research', 'tutorial', 'list', 'correspondence', 'unknown'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Topics');
     else if (['reference', 'whitepaper', 'specification', 'technical_document'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'References');
-    else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'short_film', 'dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
+    else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'short_film'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
     else if (semanticType === 'journal') destFolder = path.join('04_Journal', 'Daily');
     else if (semanticType === 'meeting') destFolder = path.join('04_Journal', 'Meetings');
     else if (semanticType === 'event') destFolder = path.join('04_Journal', 'Events');
