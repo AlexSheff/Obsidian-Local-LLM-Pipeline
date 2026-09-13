@@ -134,6 +134,9 @@ async function processFile(filePath: string) {
             // Ignore parse errors, just use the raw text
           }
         } else if (fileExtension === '.html' || fileExtension === '.xml') {
+          // Remove XML declaration and DOCTYPE
+          text = text.replace(/<\?xml.*?\?>/gi, '');
+          text = text.replace(/<!DOCTYPE.*?>/gi, '');
           // Remove scripts and styles
           text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
           text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
@@ -141,8 +144,10 @@ async function processFile(filePath: string) {
           text = text.replace(/<(br|p|div|li|h[1-6])[^>]*>/gi, '\n');
           // Remove all remaining tags
           text = text.replace(/<[^>]+>/g, '');
-          // Decode basic HTML entities
+          // Decode basic HTML entities and decimal/hex numeric entities
           text = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+          text = text.replace(/&#(\d+);/g, (m, d) => String.fromCharCode(d));
+          text = text.replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCharCode(parseInt(h, 16)));
           // Collapse multiple newlines
           text = text.replace(/\n\s*\n/g, '\n\n').trim();
         }
@@ -158,28 +163,23 @@ async function processFile(filePath: string) {
     
     const prompt = `
 You are an expert system that extracts information from notes and categorizes them into a PARA structure.
-Read the following text and extract exactly 8 fields in strict JSON format. 
+Read the following text and extract exactly 12 fields in strict JSON format. 
 Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
 
 The required fields are:
 1. "title" (string): A short, clear title for the document.
-2. "type" (string): MUST be one of the following exact strings:
-   - "person", "contact", "resume", "profile" (for people, contacts, character profiles, resumes, CVs)
-   - "organization", "place", "entity" (for companies, locations, generic entities)
-   - "project", "plan", "task" (for actionable projects or plans)
-   - "book", "literature" (for books, novels, literature)
-   - "story", "scenario", "script", "short_film", "essay", "article", "document" (for creative writing, scripts, and texts)
-   - "quote", "phrase" (for quotes, memorable phrases, short sayings)
-   - "idea", "concept", "note", "research", "tutorial", "list" (for general knowledge)
-   - "reference", "whitepaper", "specification", "technical_document" (for technical references)
-   - "journal", "meeting", "event", "dialogue", "transcript", "correspondence" (for time-based logs and conversations)
-   - "archive", "unknown" (if none fit)
-3. "summary" (string): A brief summary of the content.
-4. "tags" (array of strings): List of tags without the '#' symbol.
-5. "entities" (array of strings): List of people, orgs, or places mentioned.
-6. "projects" (array of strings): List of related projects.
-7. "tasks" (array of strings): List of actionable tasks identified.
-8. "key_points" (array of strings): 3-5 key points extracted.
+2. "document_type" (string): MUST be one of:
+   - "resume", "profile", "contact", "book", "literature", "story", "scenario", "script", "short_film", "essay", "article", "document", "quote", "phrase", "idea", "concept", "note", "research", "tutorial", "list", "reference", "whitepaper", "specification", "technical_document", "journal", "meeting", "event", "dialogue", "transcript", "correspondence", "project_document", "archive", "unknown"
+3. "primary_entity" (string or null): If the document is fundamentally ABOUT a specific person, organization, or place (e.g. a Resume is about a Person), specify it here as "person", "organization", "place", or "entity". Otherwise null.
+4. "summary" (string): A brief summary of the content.
+5. "tags" (array of strings): List of tags without the '#' symbol.
+6. "entities" (array of strings): List of people, orgs, or places mentioned.
+7. "projects" (array of strings): List of related projects.
+8. "tasks" (array of strings): List of actionable tasks identified.
+9. "key_points" (array of strings): 3-5 key points extracted.
+10. "confidence" (number): Float between 0.0 and 1.0 indicating how confident you are in this classification.
+11. "alternative_classes" (array of objects): Up to 2 alternatives if uncertain, format: [{"class": "type", "score": 0.8}].
+12. "decision" (string): "ACCEPT" if confidence > 0.7, otherwise "REVIEW".
 
 Text:
 ${textToProcess}
@@ -216,36 +216,46 @@ ${textToProcess}
       const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]+)"/i);
       data = {
         title: titleMatch ? titleMatch[1] : originalFilename.replace(/\.[^/.]+$/, ""),
-        type: 'unknown',
+        document_type: 'unknown',
+        primary_entity: null,
         summary: 'Automatic fallback due to model parsing error or incomplete generation.',
         tags: ['processing_error'],
         key_points: [],
         entities: [],
         projects: [],
-        tasks: []
+        tasks: [],
+        confidence: 0,
+        alternative_classes: [],
+        decision: 'REVIEW'
       };
     }
     
-    const semanticType = data.type?.toLowerCase() || 'unknown';
+    const semanticType = data.document_type?.toLowerCase() || 'unknown';
+    const primaryEntity = data.primary_entity?.toLowerCase() || null;
     let destFolder = path.join('03_Knowledge', 'Topics'); // default
     
-    if (['project', 'plan', 'task'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
-    else if (['person', 'contact', 'resume', 'profile'].includes(semanticType)) destFolder = path.join('02_Areas', 'People');
-    else if (semanticType === 'organization') destFolder = path.join('02_Areas', 'Organizations');
-    else if (semanticType === 'place') destFolder = path.join('02_Areas', 'Places');
-    else if (semanticType === 'entity') destFolder = path.join('02_Areas', 'Entities');
-    else if (semanticType === 'concept') destFolder = path.join('03_Knowledge', 'Concepts');
-    else if (['book', 'literature'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Books');
-    else if (['quote', 'phrase'].includes(semanticType)) destFolder = path.join('05_Ideas', 'Quotes');
-    else if (['dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Transcripts');
-    else if (['topic', 'note', 'research', 'tutorial', 'list', 'correspondence', 'unknown'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Topics');
-    else if (['reference', 'whitepaper', 'specification', 'technical_document'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'References');
-    else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'short_film'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
-    else if (semanticType === 'journal') destFolder = path.join('04_Journal', 'Daily');
-    else if (semanticType === 'meeting') destFolder = path.join('04_Journal', 'Meetings');
-    else if (semanticType === 'event') destFolder = path.join('04_Journal', 'Events');
-    else if (semanticType === 'idea') destFolder = path.join('05_Ideas', 'Inbox');
-    else if (semanticType === 'archive') destFolder = path.join('06_Archive', 'Other');
+    if (data.decision === 'REVIEW') {
+      destFolder = path.join('00_Inbox', 'Review');
+    } else if (['person', 'organization', 'place', 'entity'].includes(primaryEntity)) {
+      if (primaryEntity === 'person') destFolder = path.join('02_Areas', 'People');
+      else if (primaryEntity === 'organization') destFolder = path.join('02_Areas', 'Organizations');
+      else if (primaryEntity === 'place') destFolder = path.join('02_Areas', 'Places');
+      else destFolder = path.join('02_Areas', 'Entities');
+    } else {
+      if (['project', 'plan', 'task', 'project_document'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
+      else if (['person', 'contact', 'resume', 'profile'].includes(semanticType)) destFolder = path.join('02_Areas', 'People'); // Fallback if primary_entity missed it
+      else if (['book', 'literature'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Books');
+      else if (['quote', 'phrase'].includes(semanticType)) destFolder = path.join('05_Ideas', 'Quotes');
+      else if (['dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Transcripts');
+      else if (['topic', 'note', 'research', 'tutorial', 'list', 'correspondence', 'unknown'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Topics');
+      else if (['reference', 'whitepaper', 'specification', 'technical_document'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'References');
+      else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'short_film'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
+      else if (semanticType === 'journal') destFolder = path.join('04_Journal', 'Daily');
+      else if (semanticType === 'meeting') destFolder = path.join('04_Journal', 'Meetings');
+      else if (semanticType === 'event') destFolder = path.join('04_Journal', 'Events');
+      else if (semanticType === 'idea') destFolder = path.join('05_Ideas', 'Inbox');
+      else if (semanticType === 'archive') destFolder = path.join('06_Archive', 'Other');
+    }
     
     // Helper to format arrays safely
     const formatArray = (arr: any) => {
@@ -274,13 +284,16 @@ ${textToProcess}
 
     const frontmatter = `---
 title: "${(data.title || 'Untitled').replace(/"/g, '\\"')}"
-type: ${data.type || 'knowledge_topic'}
+document_type: ${data.document_type || 'unknown'}
+primary_entity: ${data.primary_entity || 'null'}
 tags:${tagsYaml}
 summary: "${(data.summary || '').replace(/"/g, '\\"')}"
 key_points: ${formatList(data.key_points)}
 entities: ${formatList(data.entities)}
 projects: ${formatList(data.projects)}
 tasks: ${formatList(data.tasks)}
+confidence: ${data.confidence || 0}
+decision: ${data.decision || 'REVIEW'}
 ---
 `;
 
@@ -306,7 +319,7 @@ tasks: ${formatList(data.tasks)}
     let destResourcePath = '';
     let finalContent = frontmatter;
     
-    let linkedContent = originalContent;
+    let linkedContent = textToProcess;
     
     // Auto-link entities and projects in text files
     if (['.md', '.txt'].includes(fileExtension)) {
@@ -339,9 +352,9 @@ tasks: ${formatList(data.tasks)}
       
       finalContent += `\n# ${safeTitle}\n\n**Attachment:** [[${resourceFilename}]]\n\n`;
       
-      // Provide a preview for text-based non-MD files
-      if (['.json', '.html', '.py', '.csv', '.rtf', '.xml', '.js', '.ts', '.yaml', '.yml'].includes(fileExtension) && originalContent) {
-         finalContent += `\`\`\`\n${originalContent.slice(0, 3000)}\n${originalContent.length > 3000 ? '...\n' : ''}\`\`\`\n`;
+      // Provide a preview for text-based non-MD files. Use CLEANED TEXT (textToProcess), not originalContent!
+      if (['.json', '.html', '.py', '.csv', '.rtf', '.xml', '.js', '.ts', '.yaml', '.yml'].includes(fileExtension) && textToProcess) {
+         finalContent += `## Content Preview\n\n${textToProcess.slice(0, 5000)}\n${textToProcess.length > 5000 ? '...\n' : ''}\n`;
       }
     }
     
