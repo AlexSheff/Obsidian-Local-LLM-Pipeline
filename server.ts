@@ -157,12 +157,11 @@ async function processFile(filePath: string) {
           }
         }
         
-        // Very strict limit for local LLMs (prevent HTTP 400). Cyrillic takes 2-3 tokens per char. 
-        // We only send the beginning of the file, because classification is usually obvious from the first few paragraphs.
-        if (text.length <= 1500) {
+        // Safe limit for local LLMs with n_ctx >= 6048.
+        if (text.length <= 3000) {
           textToProcess = text;
         } else {
-          textToProcess = text.slice(0, 1500) + '\n\n...[CONTENT TRUNCATED FOR LOCAL LLM CLASSIFICATION]...';
+          textToProcess = text.slice(0, 1500) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(-1500);
         }
       } catch (err: any) {
         addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
@@ -172,31 +171,37 @@ async function processFile(filePath: string) {
     
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
     
-    // Simplified prompt for local LLMs (smaller models struggle with massive JSON schemas)
     const prompt = `
-Analyze the text and output a JSON object. 
-DO NOT output any explanations, only valid JSON.
+You are an expert system that extracts information from notes and categorizes them into a structured schema.
+Read the following text and extract exactly 14 fields in strict JSON format.
+Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
 
-Fields to extract:
-1. "title": Document title.
-2. "document_type": One of: "resume", "book", "story", "scenario", "script", "article", "document", "quote", "note", "research", "tutorial", "list", "reference", "journal", "dialogue", "transcript", "unknown".
-3. "primary_entity_type": If this is about a specific person, org, or place, specify it here (e.g., "person"). Else null.
-4. "primary_entity_name": The exact name of that primary entity (e.g., "John Doe"). Else null.
-5. "summary": 1-2 sentence summary. Keep it short. No quotes.
-6. "tags": Array of strings.
-7. "entities": Array of strings (people, places, orgs).
+The required fields are:
+1. "title" (string): A short, clear title for the document.
+2. "document_type" (string): MUST be one of: "resume", "profile", "contact", "book", "literature", "story", "scenario", "script", "short_film", "essay", "article", "document", "quote", "phrase", "idea", "concept", "note", "research", "tutorial", "list", "reference", "whitepaper", "specification", "technical_document", "journal", "meeting", "event", "dialogue", "transcript", "correspondence", "project_document", "archive", "unknown"
+3. "primary_entity_type" (string or null): If the document is fundamentally ABOUT a specific person, organization, place, book, or project, specify it here (e.g., "person", "organization", "place", "book", "project"). Otherwise null.
+4. "primary_entity_name" (string or null): The exact name of that primary entity (e.g., "John Smith", "Apple Inc"). Otherwise null.
+5. "summary" (string): A brief summary of the content.
+6. "tags" (array of strings): List of tags without the '#' symbol.
+7. "entities" (array of strings): List of people, orgs, or places mentioned.
+8. "projects" (array of strings): List of related projects.
+9. "tasks" (array of strings): List of actionable tasks identified.
+10. "relationships" (array of strings): Key connections identified (e.g. "John Smith works at Apple").
+11. "key_points" (array of strings): 3-5 key points extracted.
+12. "evidence" (string): Briefly explain why you classified this document_type and primary_entity.
+13. "scores" (object): Provide three float scores (0.0 to 1.0): {"semantic": 0.9, "structural": 0.8, "entity": 0.9}.
+14. "alternative_classes" (array of objects): Up to 2 alternatives if uncertain, format: [{"class": "type", "score": 0.8}].
 
-Text to analyze:
+Text:
 ${textToProcess}
 `;
 
     let responseContent = '';
     try {
-      // Removing response_format: { type: "json_object" } as it can cause 400 errors on older local servers.
       const payload: any = {
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 800, // Reduced to prevent hanging
+        max_tokens: 2000,
         stream: false
       };
       
@@ -254,10 +259,10 @@ ${textToProcess}
       };
     }
     
-    // Local Model scoring fallback (since we removed it from the prompt to save tokens)
-    const semScore = data.scores?.semantic || 0.8;
-    const structScore = data.scores?.structural || 0.8;
-    const entScore = data.scores?.entity || 0.8;
+    // Application-level decision logic
+    const semScore = data.scores?.semantic || 0;
+    const structScore = data.scores?.structural || 0;
+    const entScore = data.scores?.entity || 0;
     const finalScore = (semScore + structScore + entScore) / 3;
     
     let margin = finalScore;

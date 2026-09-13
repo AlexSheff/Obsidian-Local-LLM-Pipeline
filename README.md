@@ -17,6 +17,25 @@ This system is fully autonomous. You drop a raw `.md` or `.txt` file into `00_In
 
 ---
 
+## Technical Specifications (v2.0 Update)
+
+**1. Entity-First Routing**
+The system evaluates the `primary_entity_type`. If a document fundamentally represents a person, organization, place, book, or project, it strictly routes the note to the corresponding Entity folder (e.g., `02_Areas/People`), ignoring standard document types like "resume" or "profile". The final Markdown file is dynamically named after `primary_entity_name` (e.g., `John Doe.md`).
+
+**2. 14-Parameter Semantic Schema**
+The pipeline utilizes a highly structured, 14-field JSON schema for classification:
+*   `title`, `document_type`, `primary_entity_type`, `primary_entity_name`
+*   `summary`, `tags`, `entities`, `projects`, `tasks`, `relationships`, `key_points`
+*   `evidence`, `scores` (Semantic, Structural, Entity), `alternative_classes`
+
+**3. Deterministic Application-Level Decisions**
+The backend calculates a `finalScore` average across the three LLM confidence scores. It checks the `margin` against the closest alternative classification. If `finalScore > 0.7` and `margin > 0.1`, it accepts the classification. Otherwise, it sends the file to `00_Inbox/Review`.
+
+**4. Context Window Size (`n_ctx`) Requirement**
+To prevent `HTTP 400` errors and ensure the LLM has enough memory to generate the complex 14-field JSON schema, your local LLM **must be started with a context size of at least 6048** (8192 recommended).
+
+---
+
 ## Directory & Vault Structure
 
 Hermes generates and expects the following strict hierarchy within your Obsidian Vault:
