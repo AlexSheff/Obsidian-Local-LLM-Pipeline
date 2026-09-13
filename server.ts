@@ -93,7 +93,9 @@ async function processFile(filePath: string) {
         const dataBuffer = await fsPromises.readFile(filePath);
         const pdfData = await pdfParse(dataBuffer);
         const text = pdfData.text || '';
-        textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
+        // Strict limit to prevent HTTP 400 (Context length exceeded in local LLMs)
+        // Cyrillic uses more tokens, 6000 chars is roughly 6000-12000 tokens.
+        textToProcess = text.length <= 6000 ? text : text.slice(0, 3000) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-3000);
       } catch (err: any) {
         addLog(`Failed to parse PDF: ${err.message}. Falling back to filename classification.`, 'error');
         textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
@@ -103,7 +105,7 @@ async function processFile(filePath: string) {
         const result = await mammoth.extractRawText({ path: filePath });
         const text = result.value || '';
         originalContent = text; // Save it so we can include it in the markdown block if needed, though for docx we usually attach it
-        textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
+        textToProcess = text.length <= 6000 ? text : text.slice(0, 3000) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-3000);
       } catch (err: any) {
         addLog(`Failed to parse DOCX: ${err.message}. Falling back to filename classification.`, 'error');
         textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
@@ -155,10 +157,11 @@ async function processFile(filePath: string) {
           }
         }
         
-        if (text.length <= 15000) {
+        // Strict limit to prevent HTTP 400 (Context length exceeded in local LLMs)
+        if (text.length <= 6000) {
           textToProcess = text;
         } else {
-          textToProcess = text.slice(0, 5000) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(Math.floor(text.length/2)-1000, Math.floor(text.length/2)+1000) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(-5000);
+          textToProcess = text.slice(0, 2500) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(Math.floor(text.length/2)-500, Math.floor(text.length/2)+500) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(-2500);
         }
       } catch (err: any) {
         addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
@@ -198,7 +201,9 @@ ${textToProcess}
     try {
       const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, {
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
+        temperature: 0.1, // lowered to enforce determinism
+        max_tokens: 2000, // ensure enough tokens to complete the JSON response
+        response_format: { type: "json_object" }, // Many local LLMs (LM Studio/Ollama) support this now
         stream: false
       }, { timeout: 120000 }); // 2-minute timeout for CPU-bound generation
       
