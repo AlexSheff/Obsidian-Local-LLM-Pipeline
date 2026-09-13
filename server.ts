@@ -114,8 +114,37 @@ async function processFile(filePath: string) {
         // Attempt to clean encoding artifacts/weird chars if any
         let text = originalContent.replace(/\uFFFD/g, ''); 
         
-        if (fileExtension === '.html' || fileExtension === '.xml') {
-          text = text.replace(/<[^>]*>?/gm, '\n').replace(/\n\s*\n/g, '\n').trim();
+        if (fileExtension === '.json') {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.textContent) {
+              // Usually Google Keep JSON format
+              text = (parsed.title ? parsed.title + '\n\n' : '') + parsed.textContent;
+            } else {
+              // Generic extraction: pull out all string values recursively
+              const extractStrings = (obj: any): string => {
+                if (typeof obj === 'string') return obj;
+                if (Array.isArray(obj)) return obj.map(extractStrings).filter(Boolean).join('\n');
+                if (typeof obj === 'object' && obj !== null) return Object.values(obj).map(extractStrings).filter(Boolean).join('\n');
+                return '';
+              };
+              text = extractStrings(parsed);
+            }
+          } catch (e) {
+            // Ignore parse errors, just use the raw text
+          }
+        } else if (fileExtension === '.html' || fileExtension === '.xml') {
+          // Remove scripts and styles
+          text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+          text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+          // Replace common block tags with newlines
+          text = text.replace(/<(br|p|div|li|h[1-6])[^>]*>/gi, '\n');
+          // Remove all remaining tags
+          text = text.replace(/<[^>]+>/g, '');
+          // Decode basic HTML entities
+          text = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+          // Collapse multiple newlines
+          text = text.replace(/\n\s*\n/g, '\n\n').trim();
         }
         
         textToProcess = text.length <= 5000 ? text : text.slice(0, 2500) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-2500);
