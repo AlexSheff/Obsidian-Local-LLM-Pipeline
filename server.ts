@@ -157,11 +157,12 @@ async function processFile(filePath: string) {
           }
         }
         
-        // Strict limit to prevent HTTP 400 (Context length exceeded in local LLMs)
-        if (text.length <= 6000) {
+        // Very strict limit for local LLMs (prevent HTTP 400). Cyrillic takes 2-3 tokens per char. 
+        // We only send the beginning of the file, because classification is usually obvious from the first few paragraphs.
+        if (text.length <= 1500) {
           textToProcess = text;
         } else {
-          textToProcess = text.slice(0, 2500) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(Math.floor(text.length/2)-500, Math.floor(text.length/2)+500) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(-2500);
+          textToProcess = text.slice(0, 1500) + '\n\n...[CONTENT TRUNCATED FOR LOCAL LLM CLASSIFICATION]...';
         }
       } catch (err: any) {
         addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
@@ -171,57 +172,49 @@ async function processFile(filePath: string) {
     
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
     
+    // Simplified prompt for local LLMs (smaller models struggle with massive JSON schemas)
     const prompt = `
-You are an expert system that extracts information from notes and categorizes them into a structured schema.
-Read the following text and extract exactly 14 fields in strict JSON format.
-Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
+Analyze the text and output a JSON object. 
+DO NOT output any explanations, only valid JSON.
 
-The required fields are:
-1. "title" (string): A short, clear title for the document.
-2. "document_type" (string): MUST be one of:
-   - "resume", "profile", "contact", "book", "literature", "story", "scenario", "script", "short_film", "essay", "article", "document", "quote", "phrase", "idea", "concept", "note", "research", "tutorial", "list", "reference", "whitepaper", "specification", "technical_document", "journal", "meeting", "event", "dialogue", "transcript", "correspondence", "project_document", "archive", "unknown"
-3. "primary_entity_type" (string or null): If the document is fundamentally ABOUT a specific person, organization, place, book, or project, specify it here (e.g., "person", "organization", "place", "book", "project"). Otherwise null.
-4. "primary_entity_name" (string or null): The exact name of that primary entity (e.g., "John Smith", "Apple Inc"). Otherwise null.
-5. "summary" (string): A brief summary of the content.
-6. "tags" (array of strings): List of tags without the '#' symbol.
-7. "entities" (array of strings): List of people, orgs, or places mentioned.
-8. "projects" (array of strings): List of related projects.
-9. "tasks" (array of strings): List of actionable tasks identified.
-10. "relationships" (array of strings): Key connections identified (e.g. "John Smith works at Apple").
-11. "key_points" (array of strings): 3-5 key points extracted.
-12. "evidence" (string): Briefly explain why you classified this document_type and primary_entity.
-13. "scores" (object): Provide three float scores (0.0 to 1.0): {"semantic": 0.9, "structural": 0.8, "entity": 0.9}.
-14. "alternative_classes" (array of objects): Up to 2 alternatives if uncertain, format: [{"class": "type", "score": 0.8}].
+Fields to extract:
+1. "title": Document title.
+2. "document_type": One of: "resume", "book", "story", "scenario", "script", "article", "document", "quote", "note", "research", "tutorial", "list", "reference", "journal", "dialogue", "transcript", "unknown".
+3. "primary_entity_type": If this is about a specific person, org, or place, specify it here (e.g., "person"). Else null.
+4. "primary_entity_name": The exact name of that primary entity (e.g., "John Doe"). Else null.
+5. "summary": 1-2 sentence summary. Keep it short. No quotes.
+6. "tags": Array of strings.
+7. "entities": Array of strings (people, places, orgs).
 
-Text:
+Text to analyze:
 ${textToProcess}
 `;
 
     let responseContent = '';
     try {
-      const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, {
+      // Removing response_format: { type: "json_object" } as it can cause 400 errors on older local servers.
+      const payload: any = {
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1, // lowered to enforce determinism
-        max_tokens: 2000, // ensure enough tokens to complete the JSON response
-        response_format: { type: "json_object" }, // Many local LLMs (LM Studio/Ollama) support this now
+        temperature: 0.1,
+        max_tokens: 800, // Reduced to prevent hanging
         stream: false
-      }, { timeout: 120000 }); // 2-minute timeout for CPU-bound generation
+      };
+      
+      const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, payload, { timeout: 120000 });
       
       responseContent = response.data.choices[0].message.content;
     } catch (llmError: any) {
+      if (llmError.response && llmError.response.status === 400) {
+          throw new Error(`LLM Error 400: Context length exceeded or invalid format. Text was too long for your local model's n_ctx setting.`);
+      }
       if (llmError.code === 'ECONNREFUSED') {
         throw new Error(`LLM Server is not running at ${currentConfig.llamaUrl}. Please start it using start.bat`);
       }
       throw new Error(`LLM request failed: ${llmError.message}`);
     }
     
-    // Clean response (remove markdown if it's there)
+    // Robust JSON Extraction
     let jsonStr = responseContent.trim();
-    if (jsonStr.startsWith('```json')) jsonStr = jsonStr.replace(/^```json/, '');
-    if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```/, '');
-    if (jsonStr.endsWith('```')) jsonStr = jsonStr.replace(/```$/, '');
-    
-    // Attempt to extract just the JSON object to avoid trailing text errors
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       jsonStr = jsonMatch[0];
@@ -229,21 +222,27 @@ ${textToProcess}
     
     let data: any = {};
     try {
-      data = JSON.parse(jsonStr.trim());
+      // Clean up common local LLM json errors (trailing commas, unescaped newlines in strings)
+      let cleanedJsonStr = jsonStr
+         .replace(/,\s*([\}\]])/g, '$1') // remove trailing commas
+         .replace(/\n/g, ' '); // remove newlines that break string parsing
+      data = JSON.parse(cleanedJsonStr);
     } catch (parseError: any) {
-      addLog(`JSON Parse failed for ${originalFilename}: ${parseError.message}. Using fallback.`, 'error');
-      // Fallback behavior
-      const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]+)"/i);
-      const typeMatch = jsonStr.match(/"document_type"\s*:\s*"([^"]+)"/i);
-      const entityMatch = jsonStr.match(/"primary_entity_type"\s*:\s*"([^"]+)"/i);
-      const entityNameMatch = jsonStr.match(/"primary_entity_name"\s*:\s*"([^"]+)"/i);
+      addLog(`JSON Parse failed for ${originalFilename}: ${parseError.message}. Using aggressive fallback string extraction.`, 'error');
+      
+      // Super aggressive fallback for broken JSON
+      const extractField = (key: string) => {
+         const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'i');
+         const match = jsonStr.match(regex);
+         return match ? match[1].trim() : null;
+      };
       
       data = {
-        title: titleMatch ? titleMatch[1] : originalFilename.replace(/\.[^/.]+$/, ""),
-        document_type: typeMatch ? typeMatch[1] : 'unknown',
-        primary_entity_type: entityMatch ? entityMatch[1] : null,
-        primary_entity_name: entityNameMatch ? entityNameMatch[1] : null,
-        summary: 'Automatic fallback due to model parsing error or incomplete generation.',
+        title: extractField("title") || originalFilename.replace(/\.[^/.]+$/, ""),
+        document_type: extractField("document_type") || 'unknown',
+        primary_entity_type: extractField("primary_entity_type") || null,
+        primary_entity_name: extractField("primary_entity_name") || null,
+        summary: extractField("summary") || 'Automatic fallback due to model parsing error or incomplete generation.',
         tags: ['processing_error'],
         key_points: [],
         entities: [],
@@ -255,10 +254,10 @@ ${textToProcess}
       };
     }
     
-    // Application-level decision logic
-    const semScore = data.scores?.semantic || 0;
-    const structScore = data.scores?.structural || 0;
-    const entScore = data.scores?.entity || 0;
+    // Local Model scoring fallback (since we removed it from the prompt to save tokens)
+    const semScore = data.scores?.semantic || 0.8;
+    const structScore = data.scores?.structural || 0.8;
+    const entScore = data.scores?.entity || 0.8;
     const finalScore = (semScore + structScore + entScore) / 3;
     
     let margin = finalScore;
