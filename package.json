@@ -1,7 +1,9 @@
 {
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
+  "name": "hermes-obsidian-llm",
+  "version": "3.0.0",
+  "description": "An automated, Zero-Config, local intelligence pipeline for Obsidian using local LLMs.",
+  "author": "",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
