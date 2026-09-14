@@ -8,10 +8,13 @@ import axios from 'axios';
 import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 import { createServer as createViteServer } from 'vite';
-import { convert } from 'html-to-text';
+import TurndownService from 'turndown';
 
 // Handle pdf-parse default export issue
 const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+
+// Init turndown for HTML to MD
+const turndownService = new TurndownService({ headingStyle: 'atx' });
 
 const app = express();
 const PORT = 3000;
@@ -85,51 +88,47 @@ async function processFile(filePath: string) {
       return;
     }
 
-    let textToProcess = '';
-    let originalContent = '';
+    let textToProcess = '';     // Cut down text for LLM context
+    let fullConvertedText = ''; // The full text we will save in the MD file
     
     if (pdfExtensions.includes(fileExtension)) {
       try {
         const dataBuffer = await fsPromises.readFile(filePath);
         const pdfData = await pdfParse(dataBuffer);
         const text = pdfData.text || '';
-        // Strict limit to prevent HTTP 400 (Context length exceeded in local LLMs)
-        // Cyrillic uses more tokens, 6000 chars is roughly 6000-12000 tokens.
-        textToProcess = text.length <= 6000 ? text : text.slice(0, 3000) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-3000);
+        fullConvertedText = text;
+        textToProcess = text.length <= 4000 ? text : text.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
       } catch (err: any) {
         addLog(`Failed to parse PDF: ${err.message}. Falling back to filename classification.`, 'error');
         textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
       }
     } else if (docxExtensions.includes(fileExtension)) {
       try {
-        const result = await mammoth.extractRawText({ path: filePath });
-        const text = result.value || '';
-        originalContent = text; // Save it so we can include it in the markdown block if needed, though for docx we usually attach it
-        textToProcess = text.length <= 6000 ? text : text.slice(0, 3000) + '\n\n...[CONTENT OMITTED]...\n\n' + text.slice(-3000);
+        const result = await mammoth.convertToHtml({ path: filePath });
+        const html = result.value || '';
+        const mdText = turndownService.turndown(html);
+        fullConvertedText = mdText;
+        textToProcess = mdText.length <= 4000 ? mdText : mdText.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
       } catch (err: any) {
         addLog(`Failed to parse DOCX: ${err.message}. Falling back to filename classification.`, 'error');
         textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
       }
     } else {
       try {
-        originalContent = await fsPromises.readFile(filePath, 'utf-8');
+        let originalContent = await fsPromises.readFile(filePath, 'utf-8');
         
-        // Attempt to clean encoding artifacts/weird chars if any
+        // Clean encoding artifacts
         let text = originalContent.replace(/\uFFFD/g, ''); 
         
-        // Strip existing frontmatter from markdown files so it doesn't get duplicated
         if (fileExtension === '.md') {
           text = text.replace(/^---\n[\s\S]*?\n---\n*/, '');
-        }
-        
-        if (fileExtension === '.json') {
+          fullConvertedText = text;
+        } else if (fileExtension === '.json') {
           try {
             const parsed = JSON.parse(text);
             if (parsed.textContent) {
-              // Usually Google Keep JSON format
               text = (parsed.title ? parsed.title + '\n\n' : '') + parsed.textContent;
             } else {
-              // Generic extraction: pull out all string values recursively
               const extractStrings = (obj: any): string => {
                 if (typeof obj === 'string') return obj;
                 if (Array.isArray(obj)) return obj.map(extractStrings).filter(Boolean).join('\n');
@@ -138,30 +137,28 @@ async function processFile(filePath: string) {
               };
               text = extractStrings(parsed);
             }
+            fullConvertedText = text;
           } catch (e) {
-            // Ignore parse errors, just use the raw text
+            fullConvertedText = text;
           }
         } else if (fileExtension === '.html' || fileExtension === '.xml') {
           try {
             let cleanHtml = text.replace(/<\?xml.*?\?>/gi, '').replace(/<!DOCTYPE.*?>/gi, '');
-            text = convert(cleanHtml, {
-              wordwrap: 130,
-              selectors: [
-                { selector: 'a', options: { ignoreHref: true } },
-                { selector: 'img', format: 'skip' }
-              ]
-            });
+            text = turndownService.turndown(cleanHtml);
+            fullConvertedText = text;
           } catch (e) {
-            addLog(`html-to-text failed, using basic cleanup.`, 'error');
+            addLog(`turndown failed, using basic cleanup.`, 'error');
             text = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
+            fullConvertedText = text;
           }
+        } else {
+           fullConvertedText = text;
         }
         
-        // Safe limit for local LLMs with n_ctx >= 6048.
-        if (text.length <= 3000) {
-          textToProcess = text;
+        if (fullConvertedText.length <= 4000) {
+          textToProcess = fullConvertedText;
         } else {
-          textToProcess = text.slice(0, 1500) + '\n\n...[MIDDLE CONTENT OMITTED]...\n\n' + text.slice(-1500);
+          textToProcess = fullConvertedText.slice(0, 4000) + '\n\n...[MIDDLE CONTENT OMITTED]...';
         }
       } catch (err: any) {
         addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
@@ -172,25 +169,15 @@ async function processFile(filePath: string) {
     addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
     
     const prompt = `
-You are an expert system that extracts information from notes and categorizes them into a structured schema.
-Read the following text and extract exactly 14 fields in strict JSON format.
-Do not include markdown blocks like \`\`\`json. Output ONLY the JSON object.
+Analyze the text and output a JSON object.
+DO NOT output any markdown, explanations, or backticks. Return ONLY raw JSON.
 
-The required fields are:
-1. "title" (string): A short, clear title for the document.
-2. "document_type" (string): MUST be one of: "resume", "profile", "contact", "book", "literature", "story", "scenario", "script", "short_film", "essay", "article", "document", "quote", "phrase", "idea", "concept", "note", "research", "tutorial", "list", "reference", "whitepaper", "specification", "technical_document", "journal", "meeting", "event", "dialogue", "transcript", "correspondence", "project_document", "archive", "unknown"
-3. "primary_entity_type" (string or null): If the document is fundamentally ABOUT a specific person, organization, place, book, or project, specify it here (e.g., "person", "organization", "place", "book", "project"). Otherwise null.
-4. "primary_entity_name" (string or null): The exact name of that primary entity (e.g., "John Smith", "Apple Inc"). Otherwise null.
-5. "summary" (string): A brief summary of the content.
-6. "tags" (array of strings): List of tags without the '#' symbol.
-7. "entities" (array of strings): List of people, orgs, or places mentioned.
-8. "projects" (array of strings): List of related projects.
-9. "tasks" (array of strings): List of actionable tasks identified.
-10. "relationships" (array of strings): Key connections identified (e.g. "John Smith works at Apple").
-11. "key_points" (array of strings): 3-5 key points extracted.
-12. "evidence" (string): Briefly explain why you classified this document_type and primary_entity.
-13. "scores" (object): Provide three float scores (0.0 to 1.0): {"semantic": 0.9, "structural": 0.8, "entity": 0.9}.
-14. "alternative_classes" (array of objects): Up to 2 alternatives if uncertain, format: [{"class": "type", "score": 0.8}].
+Extract these exactly 5 fields:
+1. "title" (string): The title of the document.
+2. "summary" (string): 1-2 sentence summary of the content.
+3. "category" (string): MUST be one of: "People", "Organizations", "Knowledge", "Projects", "Journal", "Ideas", "Inbox". Pick the best fit.
+4. "tags" (array of strings): Relevant topic tags (no '#' needed).
+5. "related_concepts" (array of strings): Extract 3-7 core concepts, names, or topics mentioned in the text to be used as graph links.
 
 Text:
 ${textToProcess}
@@ -201,7 +188,7 @@ ${textToProcess}
       const payload: any = {
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 2000,
+        max_tokens: 1500,
         stream: false
       };
       
@@ -244,81 +231,30 @@ ${textToProcess}
       
       data = {
         title: extractField("title") || originalFilename.replace(/\.[^/.]+$/, ""),
-        document_type: extractField("document_type") || 'unknown',
-        primary_entity_type: extractField("primary_entity_type") || null,
-        primary_entity_name: extractField("primary_entity_name") || null,
-        summary: extractField("summary") || 'Automatic fallback due to model parsing error or incomplete generation.',
+        category: extractField("category") || 'Inbox',
+        summary: extractField("summary") || 'Automatic fallback due to model parsing error.',
         tags: ['processing_error'],
-        key_points: [],
-        entities: [],
-        projects: [],
-        tasks: [],
-        relationships: [],
-        scores: { semantic: 0, structural: 0, entity: 0 },
-        alternative_classes: []
+        related_concepts: []
       };
     }
     
-    // Application-level decision logic
-    const semScore = data.scores?.semantic ?? 0.8;
-    const structScore = data.scores?.structural ?? 0.8;
-    const entScore = data.scores?.entity ?? 0.8;
-    const finalScore = (semScore + structScore + entScore) / 3;
+    // Simplistic Routing based on Category
+    const category = data.category || 'Inbox';
+    let destFolder = path.join('00_Inbox', 'Processed'); 
     
-    let margin = finalScore;
-    if (data.alternative_classes && Array.isArray(data.alternative_classes) && data.alternative_classes.length > 0) {
-       const altScore = data.alternative_classes[0].score || 0;
-       margin = finalScore - altScore;
-    }
+    if (category === 'People') destFolder = path.join('02_Areas', 'People');
+    else if (category === 'Organizations') destFolder = path.join('02_Areas', 'Organizations');
+    else if (category === 'Knowledge') destFolder = path.join('03_Knowledge', 'Topics');
+    else if (category === 'Projects') destFolder = path.join('01_Projects', 'Active');
+    else if (category === 'Journal') destFolder = path.join('04_Journal', 'Daily');
+    else if (category === 'Ideas') destFolder = path.join('05_Ideas', 'Inbox');
     
-    let decision = 'REVIEW';
-    // Accept if final score is very high (>= 0.85) regardless of margin, OR if final score is > 0.7 and margin is > 0.1
-    if (finalScore >= 0.85 || (finalScore > 0.7 && margin > 0.1)) {
-        decision = 'ACCEPT';
-    }
+    // Generate clean filename from title
+    let safeTitle = (data.title || 'Untitled Document').replace(/[\\/:*?"<>|]/g, '').trim();
+    safeTitle = safeTitle.replace(/\s+/g, ' ');
+    if (!safeTitle) safeTitle = 'Untitled_Document';
     
-    data.confidence = finalScore;
-    data.decision = decision;
-    
-    const semanticType = data.document_type?.toLowerCase() || 'unknown';
-    const primaryType = data.primary_entity_type?.toLowerCase() || null;
-    const primaryName = data.primary_entity_name || null;
-    let destFolder = path.join('03_Knowledge', 'Topics'); // default
-    
-    // Entity Resolution & Naming Hint
-    let overrideFileName = null;
-    if (primaryType && primaryName && primaryName.length > 1) {
-       let safeEntityName = primaryName.replace(/[\\/:*?"<>|]/g, '').trim().replace(/\s+/g, ' ');
-       if (safeEntityName) {
-         overrideFileName = `${safeEntityName}.md`;
-       }
-    }
-    
-    if (decision === 'REVIEW') {
-      destFolder = path.join('00_Inbox', 'Review');
-    } else if (['person', 'organization', 'place', 'entity', 'book', 'project'].includes(primaryType)) {
-      if (primaryType === 'person') destFolder = path.join('02_Areas', 'People');
-      else if (primaryType === 'organization') destFolder = path.join('02_Areas', 'Organizations');
-      else if (primaryType === 'place') destFolder = path.join('02_Areas', 'Places');
-      else if (primaryType === 'book') destFolder = path.join('03_Knowledge', 'Books');
-      else if (primaryType === 'project') destFolder = path.join('01_Projects', 'Active');
-      else destFolder = path.join('02_Areas', 'Entities');
-    } else {
-      if (['project', 'plan', 'task', 'project_document'].includes(semanticType)) destFolder = path.join('01_Projects', 'Active');
-      else if (['person', 'contact', 'resume', 'profile'].includes(semanticType)) destFolder = path.join('02_Areas', 'People'); // Fallback if primary_entity missed it
-      else if (['book', 'literature'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Books');
-      else if (['quote', 'phrase'].includes(semanticType)) destFolder = path.join('05_Ideas', 'Quotes');
-      else if (['dialogue', 'transcript'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Transcripts');
-      else if (['topic', 'note', 'research', 'tutorial', 'list', 'correspondence', 'unknown'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Topics');
-      else if (['reference', 'whitepaper', 'specification', 'technical_document'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'References');
-      else if (['document', 'article', 'essay', 'story', 'scenario', 'script', 'short_film'].includes(semanticType)) destFolder = path.join('03_Knowledge', 'Documents');
-      else if (semanticType === 'journal') destFolder = path.join('04_Journal', 'Daily');
-      else if (semanticType === 'meeting') destFolder = path.join('04_Journal', 'Meetings');
-      else if (semanticType === 'event') destFolder = path.join('04_Journal', 'Events');
-      else if (semanticType === 'idea') destFolder = path.join('05_Ideas', 'Inbox');
-      else if (semanticType === 'archive') destFolder = path.join('06_Archive', 'Other');
-    }
-    
+    let mdFilename = `${safeTitle}.md`;
     // Helper to format arrays safely
     const formatArray = (arr: any) => {
       if (!arr) return [];
@@ -327,53 +263,28 @@ ${textToProcess}
       return [];
     };
 
-    // Format tags as a valid YAML list (with #)
     const parsedTags = formatArray(data.tags).map((t: string) => {
       let tag = String(t).trim().replace(/^#/, '');
       tag = tag.replace(/\s+/g, '-');
       return `#${tag}`;
     }).filter((t: string) => t !== '#' && t !== '#null' && t !== '#undefined');
     
-    // In YAML frontmatter, tags starting with # should be quoted if presented as a list, or we can just output them unquoted if we are careful, but quoting is safer to prevent YAML parsing errors
     const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.map(t => `"${t}"`).join('\n  - ')}` : ' []';
     
-    // Format other lists
-    const formatList = (arr: any) => {
-      const list = formatArray(arr);
-      if (list.length === 0) return '[]';
-      return `[${list.map(s => `"${String(s).replace(/"/g, '\\"')}"`).join(', ')}]`;
-    };
-
     const frontmatter = `---
 title: "${(data.title || 'Untitled').replace(/"/g, '\\"')}"
-document_type: ${data.document_type || 'unknown'}
-primary_entity_type: ${data.primary_entity_type || 'null'}
-primary_entity_name: ${data.primary_entity_name || 'null'}
+category: ${category}
 tags:${tagsYaml}
 summary: "${(data.summary || '').replace(/"/g, '\\"')}"
-key_points: ${formatList(data.key_points)}
-entities: ${formatList(data.entities)}
-projects: ${formatList(data.projects)}
-tasks: ${formatList(data.tasks)}
-relationships: ${formatList(data.relationships)}
-confidence: ${data.confidence || 0}
-margin: ${margin || 0}
-decision: ${data.decision || 'REVIEW'}
 ---
 `;
 
-    // Generate clean filename from title
-    let safeTitle = (data.title || 'Untitled Document').replace(/[\\/:*?"<>|]/g, '').trim();
-    safeTitle = safeTitle.replace(/\s+/g, ' ');
-    if (!safeTitle) safeTitle = 'Untitled_Document';
-    
-    let mdFilename = overrideFileName || `${safeTitle}.md`;
     let destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
     
     // Handle name collisions for the markdown file
     let counter = 1;
     while (fs.existsSync(destMdPath)) {
-        mdFilename = overrideFileName ? `${overrideFileName.replace('.md', '')} ${counter}.md` : `${safeTitle} ${counter}.md`;
+        mdFilename = `${safeTitle} ${counter}.md`;
         destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
         counter++;
     }
@@ -381,30 +292,21 @@ decision: ${data.decision || 'REVIEW'}
     // Ensure dest directory exists
     await fsPromises.mkdir(path.dirname(destMdPath), { recursive: true });
     
+    // Generate organic links block
+    let linksBlock = '';
+    const concepts = formatArray(data.related_concepts);
+    if (concepts.length > 0) {
+      linksBlock = `> **Связанные темы:** ${concepts.map((c: string) => `[[${c}]]`).join(', ')}\n\n`;
+    }
+
     let destResourcePath = '';
-    let finalContent = frontmatter;
+    let finalContent = frontmatter + linksBlock;
     
-    let linkedContent = textToProcess;
+    // Inject the fully converted Markdown text
+    finalContent += `${fullConvertedText}`;
     
-    // Auto-link entities and projects in text files
-    if (['.md', '.txt'].includes(fileExtension)) {
-      const terms = [...(data.entities || []), ...(data.projects || [])].filter(Boolean);
-      // Sort by length descending to replace longer terms first
-      terms.sort((a, b) => b.length - a.length);
-      
-      terms.forEach(term => {
-        if (term.length > 3) { // Only link meaningful words
-           try {
-             // Escape regex chars
-             const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-             const regex = new RegExp(`(?<!\\[\\[)\\b(${safeTerm})\\b(?!\\]\\])`, 'gi');
-             linkedContent = linkedContent.replace(regex, '[[$1]]');
-           } catch(e) {}
-        }
-      });
-      finalContent += `\n${linkedContent}`;
-    } else {
-      // For PDF, HTML, JSON, etc., copy the file as an attachment and link it.
+    // For PDFs, we still keep the original file attached to the vault as a reference
+    if (pdfExtensions.includes(fileExtension)) {
       let resourceFilename = `${safeTitle.replace(/\s+/g, '_')}${fileExtension}`;
       destResourcePath = path.join(currentConfig.vaultPath, destFolder, resourceFilename);
       
@@ -415,12 +317,7 @@ decision: ${data.decision || 'REVIEW'}
           resCounter++;
       }
       
-      finalContent += `\n# ${safeTitle}\n\n**Attachment:** [[${resourceFilename}]]\n\n`;
-      
-      // Provide a preview for text-based non-MD files. Use CLEANED TEXT (textToProcess), not originalContent!
-      if (['.json', '.html', '.py', '.csv', '.rtf', '.xml', '.js', '.ts', '.yaml', '.yml'].includes(fileExtension) && textToProcess) {
-         finalContent += `## Content Preview\n\n${textToProcess.slice(0, 5000)}\n${textToProcess.length > 5000 ? '...\n' : ''}\n`;
-      }
+      finalContent = frontmatter + linksBlock + `**Исходный файл:** [[${resourceFilename}]]\n\n---\n\n` + fullConvertedText;
     }
     
     // Write new markdown note
@@ -441,21 +338,28 @@ decision: ${data.decision || 'REVIEW'}
       }
     }
     
-    // Move original
+    // Move original while preserving relative directory structure
     const hash = crypto.createHash('sha256').update(originalFilename).digest('hex').slice(0, 8);
+    const inboxRoot = path.join(currentConfig.vaultPath, '00_Inbox');
+    let relativePath = path.relative(inboxRoot, filePath); // e.g. "MyFolder/subfile.txt"
     const rawFolder = path.join(currentConfig.vaultPath, '99_System', '_keep_raw', 'inbox');
-    await fsPromises.mkdir(rawFolder, { recursive: true });
-    const originalMovePath = path.join(rawFolder, `${hash}_${originalFilename}`);
+    
+    // Build the final path mirroring the inbox structure
+    const relativeDir = path.dirname(relativePath);
+    const targetRawFolder = path.join(rawFolder, relativeDir);
+    await fsPromises.mkdir(targetRawFolder, { recursive: true });
+    
+    const originalMovePath = path.join(targetRawFolder, `${hash}_${originalFilename}`);
     
     try {
       await fsPromises.rename(filePath, originalMovePath);
-      addLog(`Moved original to: 99_System/_keep_raw/inbox/${hash}_${originalFilename}`);
+      addLog(`Moved original to: 99_System/_keep_raw/inbox/${relativeDir !== '.' ? relativeDir + '/' : ''}${hash}_${originalFilename}`);
     } catch (renameErr: any) {
       if (renameErr.code === 'EXDEV') {
         // Cross-device link error fallback
         await fsPromises.copyFile(filePath, originalMovePath);
         await fsPromises.unlink(filePath);
-        addLog(`Copied and deleted original to: 99_System/_keep_raw/inbox/${hash}_${originalFilename}`);
+        addLog(`Copied and deleted original to: 99_System/_keep_raw/inbox/${relativeDir !== '.' ? relativeDir + '/' : ''}${hash}_${originalFilename}`);
       } else if (renameErr.code === 'EPERM' || renameErr.code === 'EBUSY') {
         throw new Error(`File is locked by another process (EPERM/EBUSY)`);
       } else {
@@ -479,18 +383,9 @@ decision: ${data.decision || 'REVIEW'}
     }
     registry.push({
       hash,
-      original_path: `00_Inbox/${originalFilename}`,
+      original_path: `00_Inbox/${relativePath}`,
       destination: `${destFolder}/${mdFilename}`,
-      document_type: semanticType,
-      primary_entity_type: primaryType,
-      primary_entity_name: primaryName,
-      entities: data.entities || [],
-      projects: data.projects || [],
-      confidence: data.confidence || 0,
-      scores: data.scores || {},
-      margin: margin || 0,
-      decision: data.decision || 'REVIEW',
-      pipeline_version: '2.0',
+      category: category,
       processed_at: new Date().toISOString()
     });
     
@@ -518,7 +413,7 @@ decision: ${data.decision || 'REVIEW'}
       }
       
       // People MOC
-      if (destFolder.includes('02_Areas') && (semanticType === 'person' || primaryType === 'person')) {
+      if (destFolder.includes('02_Areas') && category === 'People') {
         const mocPeoplePath = path.join(mocsDir, 'moc_people.md');
         if (fs.existsSync(mocPeoplePath)) {
           await fsPromises.appendFile(mocPeoplePath, `\n- ${link} - ${data.summary || ''}`);
@@ -580,16 +475,19 @@ app.post('/api/start', async (req, res) => {
   
   watcher = chokidar.watch(inboxPath, {
     ignored: [
-      /(^|[\\/])\\../,
-      (testPath: string) => testPath.includes(path.sep + 'Review') || testPath.includes('/Review') || testPath.includes('\\Review')
+      /(^|[\\/])\../, // ignore hidden files
+      (testPath: string) => testPath.includes(path.sep + 'Review') || testPath.includes('/Review') || testPath.includes('\\Review'),
+      (testPath: string) => testPath.includes(path.sep + 'Processed') || testPath.includes('/Processed') || testPath.includes('\\Processed')
     ],
     persistent: true,
+    depth: 99, // explicitly allow deep recursive watching
     awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 }
   });
   
   watcher.on('add', (filePath) => {
-    // Double check to prevent loops
+    // Double check to prevent loops in output directories
     if (filePath.includes('/Review/') || filePath.includes('\\Review\\')) return;
+    if (filePath.includes('/Processed/') || filePath.includes('\\Processed\\')) return;
     
     fileQueue.push(filePath);
     processQueue();

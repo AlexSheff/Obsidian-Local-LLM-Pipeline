@@ -17,22 +17,20 @@ This system is fully autonomous. You drop a raw `.md` or `.txt` file into `00_In
 
 ---
 
-## Technical Specifications (v2.0 Update)
+## Technical Specifications (v3.0 Organic Network Update)
 
-**1. Entity-First Routing**
-The system evaluates the `primary_entity_type`. If a document fundamentally represents a person, organization, place, book, or project, it strictly routes the note to the corresponding Entity folder (e.g., `02_Areas/People`), ignoring standard document types like "resume" or "profile". The final Markdown file is dynamically named after `primary_entity_name` (e.g., `John Doe.md`).
+**1. Universal Markdown Conversion**
+The system now includes `turndown` and `mammoth` integration. All incoming documents (HTML, DOCX, JSON, XML) are converted on the fly into clean Markdown. The converted text is injected directly into the final note below the YAML frontmatter, ensuring 100% of your data is indexed by Obsidian's search. (Original non-MD attachments like PDFs are still preserved and linked).
 
-**2. 14-Parameter Semantic Schema**
-The pipeline utilizes a highly structured, 14-field JSON schema for classification:
-*   `title`, `document_type`, `primary_entity_type`, `primary_entity_name`
-*   `summary`, `tags`, `entities`, `projects`, `tasks`, `relationships`, `key_points`
-*   `evidence`, `scores` (Semantic, Structural, Entity), `alternative_classes`
+**2. 5-Parameter Minimalist Schema**
+The pipeline has been upgraded to a strict, highly accurate 5-field JSON schema optimized for modern 7B local models:
+*   `title`, `summary`, `category`, `tags`, `related_concepts`
 
-**3. Deterministic Application-Level Decisions**
-The backend calculates a `finalScore` average across the three LLM confidence scores. It checks the `margin` against the closest alternative classification. If `finalScore > 0.7` and `margin > 0.1`, it accepts the classification. Otherwise, it sends the file to `00_Inbox/Review`.
+**3. Organic Graph Growth**
+Instead of relying on brittle regex text replacements for linking, the V3 pipeline generates a robust `> **Связанные темы:** [[Concept]]` block at the top of every processed note. This immediately pulls the file into your Knowledge Graph and connects it to the wider network without creating disconnected "halo" files.
 
-**4. Context Window Size (`n_ctx`) Requirement**
-To prevent `HTTP 400` errors and ensure the LLM has enough memory to generate the complex 14-field JSON schema, your local LLM **must be started with a context size of at least 6048** (8192 recommended).
+**4. Recursive Inbox Processing & Backup Mirroring**
+The file watcher (`chokidar`) now supports infinite depth (`depth: 99`). You can drag entire complex folder hierarchies into `00_Inbox`. When processing is complete, the original files are moved to `99_System/_keep_raw/inbox/`, perfectly preserving their original nested subdirectory structure.
 
 ---
 
@@ -84,7 +82,7 @@ D:\Obsidian\User_Vault\
 - *(No need for external LLM apps! The installer handles downloading the required engine and models)*
 
 ### Recommended Model
-The installer automatically downloads the **Hermes-3-Llama-3.2-3B.Q4_K_M** model. It's incredibly fast (even on CPUs) and executes JSON-schema instructions flawlessly.
+The installer automatically downloads the **Qwen2.5-Coder-7B-Instruct-Q4_K_M** model. It's incredibly smart, highly capable at JSON-schema adherence, and runs efficiently on modern processors.
 
 ### Setup Instructions (Windows)
 
