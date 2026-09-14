@@ -9,6 +9,7 @@ import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 import { createServer as createViteServer } from 'vite';
 import TurndownService from 'turndown';
+import 'dotenv/config';
 
 // Handle pdf-parse default export issue
 const pdfParse = (pdfParseModule as any).default || pdfParseModule;
@@ -19,7 +20,7 @@ const turndownService = new TurndownService({ headingStyle: 'atx' });
 turndownService.remove(['style', 'script', 'noscript', 'meta', 'head', 'link']);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 app.use(express.json());
 
@@ -41,7 +42,7 @@ async function getFileHash(filePath: string): Promise<string> {
     const hash = crypto.createHash('sha256');
     const stream = fs.createReadStream(filePath);
     stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex').slice(0, 8)));
+    stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', reject);
   });
 }
@@ -129,13 +130,18 @@ async function processQueue() {
       await processFile(item.filePath);
     } catch (err: any) {
       addLog(`Error processing ${path.basename(item.filePath)}: ${err.message}`, 'error');
-      if (item.retryCount < MAX_RETRIES) {
+      
+      const isRetriable = err.isRetriable !== false;
+      
+      if (isRetriable && item.retryCount < MAX_RETRIES) {
         addLog(`Re-queueing ${path.basename(item.filePath)} (Retry ${item.retryCount + 1}/${MAX_RETRIES})`, 'info');
-        fileQueue.push({ filePath: item.filePath, retryCount: item.retryCount + 1 });
-        // Exponential backoff
-        await new Promise(r => setTimeout(r, Math.pow(2, item.retryCount) * 2000));
+        // Exponential backoff pushing to queue asynchronously so it doesn't block the rest
+        setTimeout(() => {
+            fileQueue.push({ filePath: item.filePath, retryCount: item.retryCount + 1 });
+            processQueue(); // trigger if idle
+        }, Math.pow(2, item.retryCount) * 2000);
       } else {
-        addLog(`Abandoned ${path.basename(item.filePath)} after ${MAX_RETRIES} retries.`, 'error');
+        addLog(`Abandoned ${path.basename(item.filePath)}.`, 'error');
       }
     }
     activeTasks--;
@@ -152,7 +158,7 @@ async function gracefulShutdown() {
   if (watcher) await watcher.close();
   
   const startWait = Date.now();
-  while (activeTasks > 0 && Date.now() - startWait < 30000) {
+  while (activeTasks > 0 && Date.now() - startWait < 130000) {
     await new Promise(r => setTimeout(r, 500));
   }
   addLog('Shutdown complete.', 'success');
@@ -181,7 +187,9 @@ async function processFile(filePath: string) {
   
   const stats = await fsPromises.stat(filePath);
   if (stats.size === 0) {
-    throw new Error('File is empty.');
+    const err = new Error('File is empty.');
+    (err as any).isRetriable = false;
+    throw err;
   }
 
   let textToProcess = '';     
@@ -214,13 +222,7 @@ async function processFile(filePath: string) {
   } else {
     // Is Text/HTML/JSON
     try {
-      // Memory-safe, size-aware reading: only read first 250KB max to avoid OOM on huge logs
-      const MAX_TEXT_READ = 250 * 1024;
-      const readStream = fs.createReadStream(filePath, { start: 0, end: MAX_TEXT_READ });
-      let originalContent = '';
-      for await (const chunk of readStream) {
-         originalContent += chunk;
-      }
+      let originalContent = await fsPromises.readFile(filePath, 'utf-8');
       
       let text = originalContent.replace(/\uFFFD/g, ''); 
       
@@ -388,11 +390,13 @@ ${textToProcess}
   
   const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.map(t => `"${t}"`).join('\n  - ')}` : ' []';
   
+  const safeSummary = (data.summary || '').replace(/"/g, '\\"').replace(/\n/g, ' ');
+  
   const frontmatter = `---
-title: "${safeTitle.replace(/"/g, '\\"')}"
+title: "${safeTitle.replace(/"/g, '\\"').replace(/\n/g, ' ')}"
 category: ${category}
 tags:${tagsYaml}
-summary: "${(data.summary || '').replace(/"/g, '\\"')}"
+summary: "${safeSummary}"
 ---
 `;
 
@@ -626,8 +630,10 @@ app.post('/api/start', async (req, res) => {
   watcher = chokidar.watch(inboxPath, {
     ignored: [
       /(^|[\\/])\../,
-      (testPath: string) => testPath.includes(path.sep + 'Review') || testPath.includes('/Review') || testPath.includes('\\Review'),
-      (testPath: string) => testPath.includes(path.sep + 'Processed') || testPath.includes('/Processed') || testPath.includes('\\Processed')
+      (testPath: string) => {
+         const parts = testPath.split(path.sep);
+         return parts.includes('Review') || parts.includes('Processed');
+      }
     ],
     persistent: true,
     depth: 99,
@@ -672,7 +678,7 @@ app.post('/api/init-vault', async (req, res) => {
   
   try {
     const dirs = [
-      '00_Inbox',
+      '00_Inbox', '00_Inbox/Processed',
       '01_Projects/Active', '01_Projects/Incubator', '01_Projects/Archive',
       '02_Areas/People', '02_Areas/Organizations', '02_Areas/Places', '02_Areas/Entities',
       '03_Knowledge/Concepts', '03_Knowledge/Topics', '03_Knowledge/References', '03_Knowledge/Documents',
@@ -717,33 +723,8 @@ app.get('/api/registry', async (req, res) => {
   if (fs.existsSync(registryPath)) {
     const unlock = await registryMutex.lock();
     try {
-      let registry: any[] = [];
-      const stream = fs.createReadStream(registryPath, { encoding: 'utf-8' });
-      let remainder = '';
-      let isFirstChunk = true;
-      
-      for await (const chunk of stream) {
-         let data = remainder + chunk;
-         if (isFirstChunk) {
-            data = data.replace(/^[\s\n]*\[\s*/, '');
-            isFirstChunk = false;
-         }
-         const parts = data.split('},');
-         remainder = parts.pop() || '';
-         for (const part of parts) {
-            try {
-               const cleanPart = part.trim() + '}';
-               if (cleanPart.length > 2) registry.push(JSON.parse(cleanPart));
-            } catch(e) {}
-         }
-      }
-      if (remainder) {
-         remainder = remainder.replace(/\]\s*$/, '').trim();
-         if (remainder) {
-             try { registry.push(JSON.parse(remainder)); } catch(e) {}
-         }
-      }
-      res.json(registry);
+      const regContent = await fsPromises.readFile(registryPath, 'utf-8');
+      res.json(JSON.parse(regContent));
     } catch (e) {
       res.json([]);
     } finally {
@@ -764,44 +745,20 @@ app.post('/api/generate-digest', async (req, res) => {
     let registry: any[] = [];
     const unlock = await registryMutex.lock();
     try {
-      // Memory-safe registry read (stream-based split, avoiding massive single JSON string parsing)
-      const stream = fs.createReadStream(registryPath, { encoding: 'utf-8' });
-      let remainder = '';
-      let isFirstChunk = true;
-      
-      for await (const chunk of stream) {
-         let data = remainder + chunk;
-         if (isFirstChunk) {
-            data = data.replace(/^[\s\n]*\[\s*/, '');
-            isFirstChunk = false;
-         }
-         
-         const parts = data.split('},');
-         remainder = parts.pop() || '';
-         
-         for (const part of parts) {
-            try {
-               // Re-add the chopped brace
-               const cleanPart = part.trim() + '}';
-               if (cleanPart.length > 2) {
-                   registry.push(JSON.parse(cleanPart));
-               }
-            } catch(e) {}
-         }
-      }
-      
-      if (remainder) {
-         remainder = remainder.replace(/\]\s*$/, '').trim();
-         if (remainder) {
-             try { registry.push(JSON.parse(remainder)); } catch(e) {}
-         }
-      }
+      const regContent = await fsPromises.readFile(registryPath, 'utf-8');
+      registry = JSON.parse(regContent);
+    } catch (e) {
+      registry = [];
     } finally {
       unlock();
     }
     
     const todayStr = new Date().toLocaleDateString('sv-SE'); 
-    const todayItems = registry.filter((item: any) => item.processed_at && item.processed_at.startsWith(todayStr));
+    const todayItems = registry.filter((item: any) => {
+        if (!item.processed_at) return false;
+        const itemDate = new Date(item.processed_at);
+        return itemDate.toLocaleDateString('sv-SE') === todayStr;
+    });
     
     if (todayItems.length === 0) return res.status(400).json({ error: 'No files processed today to summarize.' });
     

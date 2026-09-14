@@ -39,7 +39,8 @@ export default function Analytics() {
 
   // Prepare data for charts
   const typeCount = registry.reduce((acc, curr) => {
-    acc[curr.type] = (acc[curr.type] || 0) + 1;
+    const cat = curr.category || 'unknown';
+    acc[cat] = (acc[cat] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
 
@@ -52,11 +53,15 @@ export default function Analytics() {
   const last7Days = [...Array(7)].map((_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    return d.toLocaleDateString('sv-SE');
+    return { dateObj: d, dateStr: d.toLocaleDateString('sv-SE') };
   }).reverse();
 
-  const activityData = last7Days.map(dateStr => {
-    const count = registry.filter(r => r.processed_at && r.processed_at.startsWith(dateStr)).length;
+  const activityData = last7Days.map(({ dateObj, dateStr }) => {
+    const count = registry.filter(r => {
+        if (!r.processed_at) return false;
+        const rDate = new Date(r.processed_at);
+        return rDate.toLocaleDateString('sv-SE') === dateStr;
+    }).length;
     return { name: dateStr.slice(5), count }; // MM-DD
   });
 

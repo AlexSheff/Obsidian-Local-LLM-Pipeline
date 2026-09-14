@@ -18,6 +18,7 @@ const isLinux = process.platform === 'linux';
 
 const EXE_NAME = isWin ? 'llama-server.exe' : 'llama-server';
 
+// Download utility
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     console.log(`Starting download from ${url}...`);
@@ -87,10 +88,6 @@ async function setupLlamaCpp() {
 
   const validRelease = releaseInfo.find(r => r.assets && r.assets.length > 5);
   if (!validRelease) throw new Error('Could not find a valid release for llama.cpp');
-  
-  let assetNameQuery = 'ubuntu-x64.zip'; // Linux fallback
-  if (isWin) assetNameQuery = 'win-cpu-x64.zip';
-  if (isMac) assetNameQuery = 'macos-x64.zip'; // Just an approximation, but macOS is usually handled via brew
   
   const asset = validRelease.assets.find(a => {
      if (isWin) return a.name.includes('win-cpu-x64.zip') || a.name.includes('win-avx2-x64.zip');

@@ -41,31 +41,34 @@ Hermes generates and expects the following strict hierarchy within your Obsidian
 ```text
 D:\Obsidian\User_Vault\
 ├── 00_Inbox/                  <- Drop your raw files here. Chokidar watches this folder.
+│   └── Processed/             <- Default fallback target for 'Inbox' or unclassified files.
 ├── 00_MOC/                    <- Map of Content files (moc_projects, moc_people, etc.)
 ├── 01_Projects/
-│   ├── Active/                <- Target for 'project', 'plan'
+│   ├── Active/                <- Target for 'Projects'
 │   ├── Incubator/
 │   └── Archive/
 ├── 02_Areas/
-│   ├── People/                <- Target for 'person'
-│   ├── Organizations/         <- Target for 'organization'
-│   ├── Places/                <- Target for 'place'
-│   └── Entities/              <- Target for 'entity'
+│   ├── People/                <- Target for 'People'
+│   ├── Organizations/         <- Target for 'Organizations'
+│   ├── Places/
+│   └── Entities/
 ├── 03_Knowledge/
-│   ├── Concepts/              <- Target for 'concept'
-│   ├── Topics/                <- Default fallback (research, note, tutorial, etc.)
-│   ├── References/            <- Target for 'whitepaper', 'specification'
-│   └── Documents/             <- Target for 'article', 'essay', 'script'
+│   ├── Concepts/
+│   ├── Topics/                <- Target for 'Knowledge'
+│   ├── References/
+│   └── Documents/
 ├── 04_Journal/
-│   ├── Daily/                 <- Target for 'journal'
-│   ├── Meetings/              <- Target for 'meeting'
-│   └── Events/                <- Target for 'event'
+│   ├── Daily/                 <- Target for 'Journal'
+│   ├── Meetings/
+│   └── Events/
 ├── 05_Ideas/
-│   ├── Inbox/                 <- Target for 'idea'
+│   ├── Inbox/                 <- Target for 'Ideas'
 │   ├── Developing/
 │   └── Archive/
 ├── 06_Archive/
-│   └── Other/                 <- Target for 'archive'
+│   ├── Projects/
+│   ├── Knowledge/
+│   └── Other/
 └── 99_System/
     ├── _processing_registry.json <- Audit log of all categorized files
     ├── _keep_raw/inbox/          <- SHA256 hashed exact copies of original files
