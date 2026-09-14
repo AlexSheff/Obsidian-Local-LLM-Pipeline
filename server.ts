@@ -260,19 +260,22 @@ ${textToProcess}
     }
     
     // Application-level decision logic
-    const semScore = data.scores?.semantic || 0;
-    const structScore = data.scores?.structural || 0;
-    const entScore = data.scores?.entity || 0;
+    const semScore = data.scores?.semantic ?? 0.8;
+    const structScore = data.scores?.structural ?? 0.8;
+    const entScore = data.scores?.entity ?? 0.8;
     const finalScore = (semScore + structScore + entScore) / 3;
     
     let margin = finalScore;
-    if (data.alternative_classes && data.alternative_classes.length > 0) {
+    if (data.alternative_classes && Array.isArray(data.alternative_classes) && data.alternative_classes.length > 0) {
        const altScore = data.alternative_classes[0].score || 0;
        margin = finalScore - altScore;
     }
     
     let decision = 'REVIEW';
-    if (finalScore > 0.7 && margin > 0.1) decision = 'ACCEPT';
+    // Accept if final score is very high (>= 0.85) regardless of margin, OR if final score is > 0.7 and margin is > 0.1
+    if (finalScore >= 0.85 || (finalScore > 0.7 && margin > 0.1)) {
+        decision = 'ACCEPT';
+    }
     
     data.confidence = finalScore;
     data.decision = decision;
