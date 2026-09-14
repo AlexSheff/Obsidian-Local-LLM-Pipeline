@@ -23,7 +23,43 @@ app.use(express.json());
 
 const CONFIG_FILE = path.join(process.cwd(), 'config.json');
 
-// State for the pipeline
+// --- Thread-Safe / Concurrency Tools ---
+class Mutex {
+  private mutex = Promise.resolve();
+  lock(): Promise<() => void> {
+    let begin: (unlock: () => void) => void;
+    this.mutex = this.mutex.then(() => new Promise(begin));
+    return new Promise(res => { begin = res; });
+  }
+}
+const registryMutex = new Mutex();
+
+async function getFileHash(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex').slice(0, 8)));
+    stream.on('error', reject);
+  });
+}
+
+function sanitizeTitle(rawTitle: string, originalName: string) {
+  let title = rawTitle || originalName;
+  // Remove extensions
+  title = title.replace(/\.[a-z0-9]+$/i, '');
+  // Remove prefixes like Re:, FW:
+  title = title.replace(/^(re|fw|fwd|title|file):\s*/i, '');
+  // Remove leading timestamps
+  title = title.replace(/^(\d{4}[-_]?\d{2}[-_]?\d{2}[-_]?\d{0,6}|\d{10,14})\s*/, '');
+  // Clean illegal chars and truncate
+  title = title.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+  if (title.length > 100) title = title.substring(0, 100).trim();
+  if (!title) title = 'Untitled_Document';
+  return title;
+}
+
+// --- State & Lifecycle ---
 let isWatching = false;
 let watcher: FSWatcher | null = null;
 let currentConfig = {
@@ -31,7 +67,6 @@ let currentConfig = {
   llamaUrl: 'http://127.0.0.1:8080'
 };
 
-// Load config from disk if exists
 try {
   if (fs.existsSync(CONFIG_FILE)) {
     const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
@@ -41,24 +76,6 @@ try {
 
 let logs: { timestamp: string, message: string, type: 'info' | 'error' | 'success' }[] = [];
 
-// Queue system to process one file at a time so we don't overload the local LLM
-const fileQueue: string[] = [];
-let isProcessingQueue = false;
-
-async function processQueue() {
-  if (isProcessingQueue) return;
-  isProcessingQueue = true;
-  
-  while (fileQueue.length > 0) {
-    const filePath = fileQueue.shift();
-    if (filePath) {
-      await processFile(filePath);
-    }
-  }
-  
-  isProcessingQueue = false;
-}
-
 function addLog(message: string, type: 'info' | 'error' | 'success' = 'info') {
   const log = { timestamp: new Date().toISOString(), message, type };
   logs.unshift(log);
@@ -66,109 +83,176 @@ function addLog(message: string, type: 'info' | 'error' | 'success' = 'info') {
   console.log(`[${type.toUpperCase()}] ${message}`);
 }
 
+// --- Queue System with Exponential Backoff ---
+interface QueueItem {
+  filePath: string;
+  retryCount: number;
+}
+const MAX_RETRIES = 3;
+const MAX_QUEUE_SIZE = 1000;
+const fileQueue: QueueItem[] = [];
+let isProcessingQueue = false;
+let isShuttingDown = false;
+let activeTasks = 0;
+
+async function processQueue() {
+  if (isProcessingQueue || isShuttingDown) return;
+  isProcessingQueue = true;
+  
+  while (fileQueue.length > 0 && !isShuttingDown) {
+    const item = fileQueue.shift();
+    if (!item) continue;
+    
+    // Check if file still exists before processing (might be deleted/moved manually)
+    try {
+       await fsPromises.access(item.filePath);
+    } catch {
+       continue; 
+    }
+    
+    activeTasks++;
+    try {
+      await processFile(item.filePath);
+    } catch (err: any) {
+      addLog(`Error processing ${path.basename(item.filePath)}: ${err.message}`, 'error');
+      if (item.retryCount < MAX_RETRIES) {
+        addLog(`Re-queueing ${path.basename(item.filePath)} (Retry ${item.retryCount + 1}/${MAX_RETRIES})`, 'info');
+        fileQueue.push({ filePath: item.filePath, retryCount: item.retryCount + 1 });
+        // Exponential backoff
+        await new Promise(r => setTimeout(r, Math.pow(2, item.retryCount) * 2000));
+      } else {
+        addLog(`Abandoned ${path.basename(item.filePath)} after ${MAX_RETRIES} retries.`, 'error');
+      }
+    }
+    activeTasks--;
+  }
+  
+  isProcessingQueue = false;
+}
+
+// --- Graceful Shutdown ---
+async function gracefulShutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  addLog('Initiating graceful shutdown...', 'info');
+  if (watcher) await watcher.close();
+  
+  const startWait = Date.now();
+  while (activeTasks > 0 && Date.now() - startWait < 30000) {
+    await new Promise(r => setTimeout(r, 500));
+  }
+  addLog('Shutdown complete.', 'success');
+  process.exit(0);
+}
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+
+
+// --- Main Processing Logic ---
 async function processFile(filePath: string) {
   const originalFilename = path.basename(filePath);
   const fileExtension = path.extname(originalFilename).toLowerCase();
   
-  // Categorize file extensions
   const textExtensions = ['.md', '.txt', '.csv', '.rtf', '.html', '.json', '.xml', '.py', '.js', '.ts', '.yaml', '.yml'];
   const pdfExtensions = ['.pdf'];
   const docxExtensions = ['.docx'];
   
-  if (!textExtensions.includes(fileExtension) && !pdfExtensions.includes(fileExtension) && !docxExtensions.includes(fileExtension) && fileExtension !== '') {
-    addLog(`Skipped unsupported file type: ${originalFilename}`);
-    return;
-  }
+  const isText = textExtensions.includes(fileExtension);
+  const isPdf = pdfExtensions.includes(fileExtension);
+  const isDocx = docxExtensions.includes(fileExtension);
+  const isBinary = !isText && !isPdf && !isDocx;
   
   addLog(`Processing file: ${filePath}`);
-  try {
-    const stats = await fsPromises.stat(filePath);
-    if (stats.size === 0) {
-      addLog(`Skipped empty file: ${originalFilename}`, 'error');
-      return;
-    }
+  
+  const stats = await fsPromises.stat(filePath);
+  if (stats.size === 0) {
+    throw new Error('File is empty.');
+  }
 
-    let textToProcess = '';     // Cut down text for LLM context
-    let fullConvertedText = ''; // The full text we will save in the MD file
-    
-    if (pdfExtensions.includes(fileExtension)) {
-      try {
-        const dataBuffer = await fsPromises.readFile(filePath);
-        const pdfData = await pdfParse(dataBuffer);
-        const text = pdfData.text || '';
-        fullConvertedText = text;
-        textToProcess = text.length <= 4000 ? text : text.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
-      } catch (err: any) {
-        addLog(`Failed to parse PDF: ${err.message}. Falling back to filename classification.`, 'error');
-        textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
-      }
-    } else if (docxExtensions.includes(fileExtension)) {
-      try {
-        const result = await mammoth.convertToHtml({ path: filePath });
-        const html = result.value || '';
-        const mdText = turndownService.turndown(html);
-        fullConvertedText = mdText;
-        textToProcess = mdText.length <= 4000 ? mdText : mdText.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
-      } catch (err: any) {
-        addLog(`Failed to parse DOCX: ${err.message}. Falling back to filename classification.`, 'error');
-        textToProcess = `[Error extracting text. Please classify based on the file name: ${originalFilename}]`;
-      }
-    } else {
-      try {
-        let originalContent = await fsPromises.readFile(filePath, 'utf-8');
-        
-        // Clean encoding artifacts
-        let text = originalContent.replace(/\uFFFD/g, ''); 
-        
-        if (fileExtension === '.md') {
-          text = text.replace(/^---\n[\s\S]*?\n---\n*/, '');
-          fullConvertedText = text;
-        } else if (fileExtension === '.json') {
-          try {
-            const parsed = JSON.parse(text);
-            if (parsed.textContent) {
-              text = (parsed.title ? parsed.title + '\n\n' : '') + parsed.textContent;
-            } else {
-              const extractStrings = (obj: any): string => {
-                if (typeof obj === 'string') return obj;
-                if (Array.isArray(obj)) return obj.map(extractStrings).filter(Boolean).join('\n');
-                if (typeof obj === 'object' && obj !== null) return Object.values(obj).map(extractStrings).filter(Boolean).join('\n');
-                return '';
-              };
-              text = extractStrings(parsed);
-            }
-            fullConvertedText = text;
-          } catch (e) {
-            fullConvertedText = text;
-          }
-        } else if (fileExtension === '.html' || fileExtension === '.xml') {
-          try {
-            let cleanHtml = text.replace(/<\?xml.*?\?>/gi, '').replace(/<!DOCTYPE.*?>/gi, '');
-            text = turndownService.turndown(cleanHtml);
-            fullConvertedText = text;
-          } catch (e) {
-            addLog(`turndown failed, using basic cleanup.`, 'error');
-            text = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
-            fullConvertedText = text;
-          }
-        } else {
-           fullConvertedText = text;
-        }
-        
-        if (fullConvertedText.length <= 4000) {
-          textToProcess = fullConvertedText;
-        } else {
-          textToProcess = fullConvertedText.slice(0, 4000) + '\n\n...[MIDDLE CONTENT OMITTED]...';
-        }
-      } catch (err: any) {
-        addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
-        textToProcess = `[Error reading text file. Please classify based on the file name: ${originalFilename}]`;
-      }
+  let textToProcess = '';     
+  let fullConvertedText = ''; 
+  
+  if (isBinary) {
+     textToProcess = `[Binary file. Classify based on filename: ${originalFilename}]`;
+  } else if (isPdf) {
+    try {
+      const dataBuffer = await fsPromises.readFile(filePath);
+      const pdfData = await pdfParse(dataBuffer);
+      const text = pdfData.text || '';
+      fullConvertedText = text;
+      textToProcess = text.length <= 4000 ? text : text.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
+    } catch (err: any) {
+      addLog(`Failed to parse PDF: ${err.message}. Falling back to filename.`, 'error');
+      textToProcess = `[Error extracting text. Please classify based on filename: ${originalFilename}]`;
     }
-    
-    addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
-    
-    const prompt = `
+  } else if (isDocx) {
+    try {
+      const result = await mammoth.convertToHtml({ path: filePath });
+      const html = result.value || '';
+      const mdText = turndownService.turndown(html);
+      fullConvertedText = mdText;
+      textToProcess = mdText.length <= 4000 ? mdText : mdText.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
+    } catch (err: any) {
+      addLog(`Failed to parse DOCX: ${err.message}. Falling back to filename.`, 'error');
+      textToProcess = `[Error extracting text. Please classify based on filename: ${originalFilename}]`;
+    }
+  } else {
+    // Is Text/HTML/JSON
+    try {
+      // Stream aware reading could be added here for giant text files, but readFile is OK for standard notes.
+      let originalContent = await fsPromises.readFile(filePath, 'utf-8');
+      let text = originalContent.replace(/\uFFFD/g, ''); 
+      
+      if (fileExtension === '.md') {
+        text = text.replace(/^---\n[\s\S]*?\n---\n*/, '');
+        fullConvertedText = text;
+      } else if (fileExtension === '.json') {
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed.textContent) {
+            text = (parsed.title ? parsed.title + '\n\n' : '') + parsed.textContent;
+          } else {
+            const extractStrings = (obj: any): string => {
+              if (typeof obj === 'string') return obj;
+              if (Array.isArray(obj)) return obj.map(extractStrings).filter(Boolean).join('\n');
+              if (typeof obj === 'object' && obj !== null) return Object.values(obj).map(extractStrings).filter(Boolean).join('\n');
+              return '';
+            };
+            text = extractStrings(parsed);
+          }
+          fullConvertedText = text;
+        } catch (e) {
+          fullConvertedText = text;
+        }
+      } else if (fileExtension === '.html' || fileExtension === '.xml') {
+        try {
+          let cleanHtml = text.replace(/<\?xml.*?\?>/gi, '').replace(/<!DOCTYPE.*?>/gi, '');
+          text = turndownService.turndown(cleanHtml);
+          fullConvertedText = text;
+        } catch (e) {
+          addLog(`turndown failed, using basic cleanup.`, 'error');
+          text = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
+          fullConvertedText = text;
+        }
+      } else {
+         fullConvertedText = text;
+      }
+      
+      if (fullConvertedText.length <= 4000) {
+        textToProcess = fullConvertedText;
+      } else {
+        textToProcess = fullConvertedText.slice(0, 4000) + '\n\n...[MIDDLE CONTENT OMITTED]...';
+      }
+    } catch (err: any) {
+      addLog(`Failed to read file text: ${err.message}. Falling back to filename classification.`, 'error');
+      textToProcess = `[Error reading text file. Classify based on filename: ${originalFilename}]`;
+    }
+  }
+  
+  addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
+  
+  const prompt = `
 Analyze the text and output a JSON object.
 DO NOT output any markdown, explanations, or backticks. Return ONLY raw JSON.
 
@@ -183,202 +267,223 @@ Text:
 ${textToProcess}
 `;
 
-    let responseContent = '';
-    try {
-      const payload: any = {
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 1500,
-        stream: false
-      };
-      
-      const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, payload, { timeout: 120000 });
-      
-      responseContent = response.data.choices[0].message.content;
-    } catch (llmError: any) {
-      if (llmError.response && llmError.response.status === 400) {
-          throw new Error(`LLM Error 400: Context length exceeded or invalid format. Text was too long for your local model's n_ctx setting.`);
-      }
-      if (llmError.code === 'ECONNREFUSED') {
-        throw new Error(`LLM Server is not running at ${currentConfig.llamaUrl}. Please start it using start.bat`);
-      }
-      throw new Error(`LLM request failed: ${llmError.message}`);
-    }
-    
-    // Robust JSON Extraction
-    let jsonStr = responseContent.trim();
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[0];
-    }
-    
-    let data: any = {};
-    try {
-      // Clean up common local LLM json errors (trailing commas, unescaped newlines in strings)
-      let cleanedJsonStr = jsonStr
-         .replace(/,\s*([\}\]])/g, '$1') // remove trailing commas
-         .replace(/\n/g, ' '); // remove newlines that break string parsing
-      data = JSON.parse(cleanedJsonStr);
-    } catch (parseError: any) {
-      addLog(`JSON Parse failed for ${originalFilename}: ${parseError.message}. Using aggressive fallback string extraction.`, 'error');
-      
-      // Super aggressive fallback for broken JSON
-      const extractField = (key: string) => {
-         const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'i');
-         const match = jsonStr.match(regex);
-         return match ? match[1].trim() : null;
-      };
-      
-      data = {
-        title: extractField("title") || originalFilename.replace(/\.[^/.]+$/, ""),
-        category: extractField("category") || 'Inbox',
-        summary: extractField("summary") || 'Automatic fallback due to model parsing error.',
-        tags: ['processing_error'],
-        related_concepts: []
-      };
-    }
-    
-    // Simplistic Routing based on Category
-    const category = data.category || 'Inbox';
-    let destFolder = path.join('00_Inbox', 'Processed'); 
-    
-    if (category === 'People') destFolder = path.join('02_Areas', 'People');
-    else if (category === 'Organizations') destFolder = path.join('02_Areas', 'Organizations');
-    else if (category === 'Knowledge') destFolder = path.join('03_Knowledge', 'Topics');
-    else if (category === 'Projects') destFolder = path.join('01_Projects', 'Active');
-    else if (category === 'Journal') destFolder = path.join('04_Journal', 'Daily');
-    else if (category === 'Ideas') destFolder = path.join('05_Ideas', 'Inbox');
-    
-    // Generate clean filename from title
-    let safeTitle = (data.title || 'Untitled Document').replace(/[\\/:*?"<>|]/g, '').trim();
-    safeTitle = safeTitle.replace(/\s+/g, ' ');
-    if (!safeTitle) safeTitle = 'Untitled_Document';
-    
-    let mdFilename = `${safeTitle}.md`;
-    // Helper to format arrays safely
-    const formatArray = (arr: any) => {
-      if (!arr) return [];
-      if (Array.isArray(arr)) return arr;
-      if (typeof arr === 'string') return arr.split(',').map(s => s.trim()).filter(Boolean);
-      return [];
+  let responseContent = '';
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+  
+  try {
+    const payload: any = {
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 1500,
+      stream: false
     };
+    
+    const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, payload, { 
+      signal: controller.signal 
+    });
+    
+    clearTimeout(timeoutId);
+    responseContent = response.data.choices[0].message.content;
+  } catch (llmError: any) {
+    clearTimeout(timeoutId);
+    if (llmError.name === 'CanceledError' || llmError.code === 'ECONNABORTED') {
+       throw new Error(`LLM Error: Request timed out after 120 seconds.`);
+    }
+    if (llmError.response && llmError.response.status === 400) {
+        throw new Error(`LLM Error 400: Context length exceeded or invalid format.`);
+    }
+    if (llmError.code === 'ECONNREFUSED') {
+      throw new Error(`LLM Server is not running at ${currentConfig.llamaUrl}.`);
+    }
+    throw new Error(`LLM request failed: ${llmError.message}`);
+  }
+  
+  // Robust JSON Extraction
+  let jsonStr = responseContent.trim();
+  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[0];
+  }
+  
+  let data: any = {};
+  try {
+    let cleanedJsonStr = jsonStr
+       .replace(/,\s*([\}\]])/g, '$1')
+       .replace(/\n/g, ' '); 
+    data = JSON.parse(cleanedJsonStr);
+  } catch (parseError: any) {
+    addLog(`JSON Parse failed for ${originalFilename}: ${parseError.message}. Using aggressive fallback string extraction.`, 'error');
+    const extractField = (key: string) => {
+       const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'i');
+       const match = jsonStr.match(regex);
+       return match ? match[1].trim() : null;
+    };
+    
+    data = {
+      title: extractField("title") || originalFilename.replace(/\.[^/.]+$/, ""),
+      category: extractField("category") || 'Inbox',
+      summary: extractField("summary") || 'Automatic fallback due to model parsing error.',
+      tags: ['processing_error'],
+      related_concepts: []
+    };
+  }
+  
+  // Routing
+  const category = data.category || 'Inbox';
+  let destFolder = path.join('00_Inbox', 'Processed'); 
+  
+  if (category === 'People') destFolder = path.join('02_Areas', 'People');
+  else if (category === 'Organizations') destFolder = path.join('02_Areas', 'Organizations');
+  else if (category === 'Knowledge') destFolder = path.join('03_Knowledge', 'Topics');
+  else if (category === 'Projects') destFolder = path.join('01_Projects', 'Active');
+  else if (category === 'Journal') destFolder = path.join('04_Journal', 'Daily');
+  else if (category === 'Ideas') destFolder = path.join('05_Ideas', 'Inbox');
+  
+  let safeTitle = sanitizeTitle(data.title, originalFilename);
+  let mdFilename = `${safeTitle}.md`;
+  
+  const formatArray = (arr: any) => {
+    if (!arr) return [];
+    if (Array.isArray(arr)) return arr;
+    if (typeof arr === 'string') return arr.split(',').map(s => s.trim()).filter(Boolean);
+    return [];
+  };
 
-    const parsedTags = formatArray(data.tags).map((t: string) => {
-      let tag = String(t).trim().replace(/^#/, '');
-      tag = tag.replace(/\s+/g, '-');
-      return `#${tag}`;
-    }).filter((t: string) => t !== '#' && t !== '#null' && t !== '#undefined');
-    
-    const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.map(t => `"${t}"`).join('\n  - ')}` : ' []';
-    
-    const frontmatter = `---
-title: "${(data.title || 'Untitled').replace(/"/g, '\\"')}"
+  const parsedTags = formatArray(data.tags).map((t: string) => {
+    let tag = String(t).trim().replace(/^#/, '').replace(/\s+/g, '-');
+    return `#${tag}`;
+  }).filter((t: string) => t !== '#' && t !== '#null' && t !== '#undefined');
+  
+  const tagsYaml = parsedTags.length > 0 ? `\n  - ${parsedTags.map(t => `"${t}"`).join('\n  - ')}` : ' []';
+  
+  const frontmatter = `---
+title: "${safeTitle.replace(/"/g, '\\"')}"
 category: ${category}
 tags:${tagsYaml}
 summary: "${(data.summary || '').replace(/"/g, '\\"')}"
 ---
 `;
 
-    let destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
-    
-    // Handle name collisions for the markdown file
-    let counter = 1;
-    while (fs.existsSync(destMdPath)) {
-        mdFilename = `${safeTitle} ${counter}.md`;
-        destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
-        counter++;
-    }
-    
-    // Ensure dest directory exists
-    await fsPromises.mkdir(path.dirname(destMdPath), { recursive: true });
-    
-    // Generate organic links block
-    let linksBlock = '';
-    const concepts = formatArray(data.related_concepts);
-    if (concepts.length > 0) {
-      linksBlock = `> **Связанные темы:** ${concepts.map((c: string) => `[[${c}]]`).join(', ')}\n\n`;
-    }
+  let destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
+  
+  // Handle collisions
+  let counter = 1;
+  while (fs.existsSync(destMdPath)) {
+      mdFilename = `${safeTitle} ${counter}.md`;
+      destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
+      counter++;
+  }
+  
+  await fsPromises.mkdir(path.dirname(destMdPath), { recursive: true });
+  
+  let linksBlock = '';
+  const concepts = formatArray(data.related_concepts);
+  if (concepts.length > 0) {
+    linksBlock = `> **Связанные темы:** ${concepts.map((c: string) => `[[${c}]]`).join(', ')}\n\n`;
+  }
 
-    let destResourcePath = '';
-    let finalContent = frontmatter + linksBlock;
+  let finalContent = frontmatter + linksBlock;
+  let destResourcePath = '';
+  
+  if (isBinary || isPdf || isDocx) {
+    // Preserve binary/pdf/docx original file as attachment
+    let resourceFilename = `${safeTitle.replace(/\s+/g, '_')}${fileExtension}`;
+    destResourcePath = path.join(currentConfig.vaultPath, destFolder, resourceFilename);
     
-    // Inject the fully converted Markdown text
-    finalContent += `${fullConvertedText}`;
-    
-    // For PDFs, we still keep the original file attached to the vault as a reference
-    if (pdfExtensions.includes(fileExtension)) {
-      let resourceFilename = `${safeTitle.replace(/\s+/g, '_')}${fileExtension}`;
-      destResourcePath = path.join(currentConfig.vaultPath, destFolder, resourceFilename);
-      
-      let resCounter = 1;
-      while (fs.existsSync(destResourcePath)) {
-          resourceFilename = `${safeTitle.replace(/\s+/g, '_')}_${resCounter}${fileExtension}`;
-          destResourcePath = path.join(currentConfig.vaultPath, destFolder, resourceFilename);
-          resCounter++;
-      }
-      
-      finalContent = frontmatter + linksBlock + `**Исходный файл:** [[${resourceFilename}]]\n\n---\n\n` + fullConvertedText;
+    let resCounter = 1;
+    while (fs.existsSync(destResourcePath)) {
+        resourceFilename = `${safeTitle.replace(/\s+/g, '_')}_${resCounter}${fileExtension}`;
+        destResourcePath = path.join(currentConfig.vaultPath, destFolder, resourceFilename);
+        resCounter++;
     }
     
-    // Write new markdown note
+    finalContent += `**Исходный файл:** [[${resourceFilename}]]\n\n---\n\n`;
+    if (!isBinary) {
+       finalContent += fullConvertedText;
+    } else {
+       finalContent += `*(Бинарный файл не конвертируется в Markdown)*`;
+    }
+  } else {
+    // Pure text -> just inject
+    finalContent += fullConvertedText;
+  }
+  
+  // ATOMIC WRITES
+  const tmpMdPath = destMdPath + '.tmp';
+  try {
+    await fsPromises.writeFile(tmpMdPath, finalContent);
+    await fsPromises.rename(tmpMdPath, destMdPath);
+    addLog(`Created note: ${destFolder}/${mdFilename}`, 'success');
+  } catch (writeErr: any) {
+    if (fs.existsSync(tmpMdPath)) await fsPromises.unlink(tmpMdPath).catch(()=>null);
+    throw new Error(`Failed to write note: ${writeErr.message}`);
+  }
+  
+  // ATOMIC ATTACHMENT COPY
+  if (destResourcePath) {
+    const tmpResPath = destResourcePath + '.tmp';
     try {
-      await fsPromises.writeFile(destMdPath, finalContent);
-      addLog(`Created note: ${destFolder}/${mdFilename}`, 'success');
-    } catch (writeErr: any) {
-      throw new Error(`Failed to write new file: ${writeErr.message}`);
+      await fsPromises.copyFile(filePath, tmpResPath);
+      await fsPromises.rename(tmpResPath, destResourcePath);
+      addLog(`Copied attachment to: ${destFolder}/${path.basename(destResourcePath)}`, 'success');
+    } catch (copyErr: any) {
+      if (fs.existsSync(tmpResPath)) await fsPromises.unlink(tmpResPath).catch(()=>null);
+      addLog(`Failed to copy attachment: ${copyErr.message}`, 'error');
     }
-    
-    // Copy the attachment if applicable
-    if (destResourcePath) {
+  }
+  
+  // HASH & MOVE ORIGINAL (Guaranteed no loss since we reached here successfully)
+  const hash = await getFileHash(filePath);
+  const inboxRoot = path.join(currentConfig.vaultPath, '00_Inbox');
+  let relativePath = path.relative(inboxRoot, filePath); 
+  const rawFolder = path.join(currentConfig.vaultPath, '99_System', '_keep_raw', 'inbox');
+  
+  const relativeDir = path.dirname(relativePath);
+  const targetRawFolder = path.join(rawFolder, relativeDir);
+  await fsPromises.mkdir(targetRawFolder, { recursive: true });
+  
+  const originalMovePath = path.join(targetRawFolder, `${hash}_${originalFilename}`);
+  
+  try {
+    // Retry mechanism for locked files (EBUSY/EPERM)
+    let moved = false;
+    let moveRetries = 0;
+    while (!moved && moveRetries < 5) {
       try {
-        await fsPromises.copyFile(filePath, destResourcePath);
-        addLog(`Copied attachment to: ${destFolder}/${path.basename(destResourcePath)}`, 'success');
-      } catch (copyErr: any) {
-        addLog(`Failed to copy attachment: ${copyErr.message}`, 'error');
+        await fsPromises.rename(filePath, originalMovePath);
+        moved = true;
+      } catch (err: any) {
+        if (err.code === 'EXDEV') {
+          await fsPromises.copyFile(filePath, originalMovePath);
+          await fsPromises.unlink(filePath);
+          moved = true;
+        } else if (err.code === 'EPERM' || err.code === 'EBUSY') {
+          moveRetries++;
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          throw err;
+        }
       }
     }
-    
-    // Move original while preserving relative directory structure
-    const hash = crypto.createHash('sha256').update(originalFilename).digest('hex').slice(0, 8);
-    const inboxRoot = path.join(currentConfig.vaultPath, '00_Inbox');
-    let relativePath = path.relative(inboxRoot, filePath); // e.g. "MyFolder/subfile.txt"
-    const rawFolder = path.join(currentConfig.vaultPath, '99_System', '_keep_raw', 'inbox');
-    
-    // Build the final path mirroring the inbox structure
-    const relativeDir = path.dirname(relativePath);
-    const targetRawFolder = path.join(rawFolder, relativeDir);
-    await fsPromises.mkdir(targetRawFolder, { recursive: true });
-    
-    const originalMovePath = path.join(targetRawFolder, `${hash}_${originalFilename}`);
-    
-    try {
-      await fsPromises.rename(filePath, originalMovePath);
-      addLog(`Moved original to: 99_System/_keep_raw/inbox/${relativeDir !== '.' ? relativeDir + '/' : ''}${hash}_${originalFilename}`);
-    } catch (renameErr: any) {
-      if (renameErr.code === 'EXDEV') {
-        // Cross-device link error fallback
-        await fsPromises.copyFile(filePath, originalMovePath);
-        await fsPromises.unlink(filePath);
-        addLog(`Copied and deleted original to: 99_System/_keep_raw/inbox/${relativeDir !== '.' ? relativeDir + '/' : ''}${hash}_${originalFilename}`);
-      } else if (renameErr.code === 'EPERM' || renameErr.code === 'EBUSY') {
-        throw new Error(`File is locked by another process (EPERM/EBUSY)`);
-      } else {
-        throw new Error(`Failed to move original file: ${renameErr.message}`);
-      }
-    }
-    
-    // Update registry
-    const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
+    if (!moved) throw new Error("File locked permanently");
+    addLog(`Archived original to: 99_System/_keep_raw/inbox/${relativeDir !== '.' ? relativeDir + '/' : ''}${hash}_${originalFilename}`);
+  } catch (renameErr: any) {
+    throw new Error(`Failed to archive original file: ${renameErr.message}`);
+  }
+  
+  // SERIALIZED REGISTRY UPDATE (Mutex)
+  const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
+  const unlock = await registryMutex.lock();
+  try {
     let registry: any[] = [];
     if (fs.existsSync(registryPath)) {
       try {
         const regContent = await fsPromises.readFile(registryPath, 'utf-8');
         const parsed = JSON.parse(regContent);
-        if (Array.isArray(parsed)) {
-          registry = parsed;
-        }
+        if (Array.isArray(parsed)) registry = parsed;
       } catch(e) {
-        addLog(`Could not read existing registry (starting fresh).`, 'error');
+        addLog(`Could not read registry, re-initializing.`, 'error');
       }
     }
     registry.push({
@@ -388,56 +493,44 @@ summary: "${(data.summary || '').replace(/"/g, '\\"')}"
       category: category,
       processed_at: new Date().toISOString()
     });
+    // Atomic registry write
+    const tmpRegPath = registryPath + '.tmp';
+    await fsPromises.writeFile(tmpRegPath, JSON.stringify(registry, null, 2));
+    await fsPromises.rename(tmpRegPath, registryPath);
+  } finally {
+    unlock();
+  }
+  
+  // Auto-update MOCs
+  try {
+    const mocsDir = path.join(currentConfig.vaultPath, '00_MOC');
+    const link = `[[${mdFilename.replace('.md', '')}]]`;
     
-    await fsPromises.writeFile(registryPath, JSON.stringify(registry, null, 2));
-    
-    // Auto-update MOCs
-    try {
-      const mocsDir = path.join(currentConfig.vaultPath, '00_MOC');
-      const link = `[[${mdFilename.replace('.md', '')}]]`;
-      
-      // Topics/Knowledge MOC
-      if (destFolder.includes('03_Knowledge')) {
-        const mocTopicsPath = path.join(mocsDir, 'moc_topics.md');
-        if (fs.existsSync(mocTopicsPath)) {
-          await fsPromises.appendFile(mocTopicsPath, `\n- ${link} - ${data.summary || ''}`);
-        }
-      }
-      
-      // Projects MOC
-      if (destFolder.includes('01_Projects')) {
-        const mocProjectsPath = path.join(mocsDir, 'moc_projects.md');
-        if (fs.existsSync(mocProjectsPath)) {
-          await fsPromises.appendFile(mocProjectsPath, `\n- ${link} - ${data.summary || ''}`);
-        }
-      }
-      
-      // People MOC
-      if (destFolder.includes('02_Areas') && category === 'People') {
-        const mocPeoplePath = path.join(mocsDir, 'moc_people.md');
-        if (fs.existsSync(mocPeoplePath)) {
-          await fsPromises.appendFile(mocPeoplePath, `\n- ${link} - ${data.summary || ''}`);
-        }
-      }
-      
-      // Tags MOC (aggregate new tags)
-      if (parsedTags && parsedTags.length > 0) {
-        const mocTagsPath = path.join(mocsDir, 'moc_tags.md');
-        if (fs.existsSync(mocTagsPath)) {
-          const newTags = parsedTags.map(t => `- ${t} => ${link}`).join('\n');
-          await fsPromises.appendFile(mocTagsPath, `\n${newTags}`);
-        }
-      }
-    } catch(mocErr) {
-       addLog(`Failed to update MOCs: ${mocErr.message}`, 'error');
+    if (destFolder.includes('03_Knowledge')) {
+      const p = path.join(mocsDir, 'moc_topics.md');
+      if (fs.existsSync(p)) await fsPromises.appendFile(p, `\n- ${link} - ${data.summary || ''}`);
     }
-    
-  } catch (error: any) {
-    addLog(`Error processing ${filePath}: ${error.message}`, 'error');
+    if (destFolder.includes('01_Projects')) {
+      const p = path.join(mocsDir, 'moc_projects.md');
+      if (fs.existsSync(p)) await fsPromises.appendFile(p, `\n- ${link} - ${data.summary || ''}`);
+    }
+    if (destFolder.includes('02_Areas') && category === 'People') {
+      const p = path.join(mocsDir, 'moc_people.md');
+      if (fs.existsSync(p)) await fsPromises.appendFile(p, `\n- ${link} - ${data.summary || ''}`);
+    }
+    if (parsedTags && parsedTags.length > 0) {
+      const p = path.join(mocsDir, 'moc_tags.md');
+      if (fs.existsSync(p)) {
+        const newTags = parsedTags.map(t => `- ${t} => ${link}`).join('\n');
+        await fsPromises.appendFile(p, `\n${newTags}`);
+      }
+    }
+  } catch(mocErr) {
+     addLog(`Failed to update MOCs.`, 'error');
   }
 }
 
-// API Routes
+// --- API Routes ---
 app.get('/api/config', (req, res) => {
   res.json(currentConfig);
 });
@@ -455,7 +548,7 @@ app.post('/api/config', async (req, res) => {
 });
 
 app.get('/api/status', (req, res) => {
-  res.json({ isWatching, vaultPath: currentConfig.vaultPath });
+  res.json({ isWatching, vaultPath: currentConfig.vaultPath, queueLength: fileQueue.length });
 });
 
 app.post('/api/start', async (req, res) => {
@@ -475,21 +568,26 @@ app.post('/api/start', async (req, res) => {
   
   watcher = chokidar.watch(inboxPath, {
     ignored: [
-      /(^|[\\/])\../, // ignore hidden files
+      /(^|[\\/])\../,
       (testPath: string) => testPath.includes(path.sep + 'Review') || testPath.includes('/Review') || testPath.includes('\\Review'),
       (testPath: string) => testPath.includes(path.sep + 'Processed') || testPath.includes('/Processed') || testPath.includes('\\Processed')
     ],
     persistent: true,
-    depth: 99, // explicitly allow deep recursive watching
+    depth: 99,
+    ignoreInitial: false, // Important: Process existing files on start
     awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 }
   });
   
   watcher.on('add', (filePath) => {
-    // Double check to prevent loops in output directories
     if (filePath.includes('/Review/') || filePath.includes('\\Review\\')) return;
     if (filePath.includes('/Processed/') || filePath.includes('\\Processed\\')) return;
     
-    fileQueue.push(filePath);
+    if (fileQueue.length >= MAX_QUEUE_SIZE) {
+       addLog(`Queue is full! Dropping event for ${path.basename(filePath)}.`, 'error');
+       return;
+    }
+    
+    fileQueue.push({ filePath, retryCount: 0 });
     processQueue();
   });
   
@@ -560,11 +658,14 @@ app.get('/api/registry', async (req, res) => {
   if (!currentConfig.vaultPath) return res.json([]);
   const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
   if (fs.existsSync(registryPath)) {
+    const unlock = await registryMutex.lock();
     try {
       const regContent = await fsPromises.readFile(registryPath, 'utf-8');
       res.json(JSON.parse(regContent));
     } catch (e) {
       res.json([]);
+    } finally {
+      unlock();
     }
   } else {
     res.json([]);
@@ -578,10 +679,15 @@ app.post('/api/generate-digest', async (req, res) => {
   if (!fs.existsSync(registryPath)) return res.status(400).json({ error: 'No files processed yet' });
   
   try {
-    const regContent = await fsPromises.readFile(registryPath, 'utf-8');
-    const registry = JSON.parse(regContent);
+    let registry = [];
+    const unlock = await registryMutex.lock();
+    try {
+      const regContent = await fsPromises.readFile(registryPath, 'utf-8');
+      registry = JSON.parse(regContent);
+    } finally {
+      unlock();
+    }
     
-    // Get today's local date in YYYY-MM-DD
     const todayStr = new Date().toLocaleDateString('sv-SE'); 
     const todayItems = registry.filter((item: any) => item.processed_at && item.processed_at.startsWith(todayStr));
     
@@ -595,10 +701,11 @@ app.post('/api/generate-digest', async (req, res) => {
         const filePath = path.join(currentConfig.vaultPath, item.destination);
         const content = await fsPromises.readFile(filePath, 'utf-8');
         const summaryMatch = content.match(/summary:\s*["']?([^"'\n]+)["']?/);
+        // Ensure Analytics field matches the V3 property item.category
         if (summaryMatch && summaryMatch[1]) {
-           summaries.push(`- ${path.basename(item.destination)} (${item.type}): ${summaryMatch[1]}`);
+           summaries.push(`- ${path.basename(item.destination)} (${item.category || 'unknown'}): ${summaryMatch[1]}`);
         } else {
-           summaries.push(`- ${path.basename(item.destination)} (${item.type})`);
+           summaries.push(`- ${path.basename(item.destination)} (${item.category || 'unknown'})`);
         }
       } catch (err) {}
     }
@@ -617,8 +724,10 @@ Write a concise "Daily Digest" journal entry summarizing what I focused on today
     
     const digestContent = response.data.choices[0].message.content;
     const digestPath = path.join(currentConfig.vaultPath, '04_Journal', 'Daily', `${todayStr}-Digest.md`);
-    await fsPromises.mkdir(path.dirname(digestPath), { recursive: true });
     
+    // Atomic Write
+    await fsPromises.mkdir(path.dirname(digestPath), { recursive: true });
+    const tmpDigestPath = digestPath + '.tmp';
     const finalFileContent = `---
 type: "journal"
 tags: ["daily-digest", "log"]
@@ -630,7 +739,9 @@ date: "${todayStr}"
 ${digestContent.trim()}
 `;
 
-    await fsPromises.writeFile(digestPath, finalFileContent);
+    await fsPromises.writeFile(tmpDigestPath, finalFileContent);
+    await fsPromises.rename(tmpDigestPath, digestPath);
+    
     addLog(`Created daily digest: 04_Journal/Daily/${todayStr}-Digest.md`, 'success');
     res.json({ success: true, message: 'Digest created successfully' });
     

@@ -9,8 +9,8 @@ const __dirname = path.resolve();
 const LLM_DIR = path.join(__dirname, 'llm');
 const BIN_DIR = path.join(LLM_DIR, 'bin');
 const MODEL_DIR = path.join(LLM_DIR, 'models');
-const MODEL_FILE = 'Hermes-3-Llama-3.2-3B.Q4_K_M.gguf';
-const MODEL_URL = 'https://huggingface.co/NousResearch/Hermes-3-Llama-3.2-3B-GGUF/resolve/main/Hermes-3-Llama-3.2-3B.Q4_K_M.gguf';
+const MODEL_FILE = 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf';
+const MODEL_URL = 'https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf';
 
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
