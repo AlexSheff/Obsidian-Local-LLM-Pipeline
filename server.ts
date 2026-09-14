@@ -15,6 +15,8 @@ const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 
 // Init turndown for HTML to MD
 const turndownService = new TurndownService({ headingStyle: 'atx' });
+// Aggressively remove unwanted elements that clutter the LLM context
+turndownService.remove(['style', 'script', 'noscript', 'meta', 'head', 'link']);
 
 const app = express();
 const PORT = 3000;
@@ -227,12 +229,23 @@ async function processFile(filePath: string) {
         }
       } else if (fileExtension === '.html' || fileExtension === '.xml') {
         try {
-          let cleanHtml = text.replace(/<\?xml.*?\?>/gi, '').replace(/<!DOCTYPE.*?>/gi, '');
+          // Pre-emptively strip styles and scripts using robust regex before Turndown processes it
+          let cleanHtml = text
+             .replace(/<\?xml.*?\?>/gi, '')
+             .replace(/<!DOCTYPE.*?>/gi, '')
+             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+             .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+             .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, ''); // Google Keep embeds giant inline SVGs
           text = turndownService.turndown(cleanHtml);
           fullConvertedText = text;
         } catch (e) {
           addLog(`turndown failed, using basic cleanup.`, 'error');
-          text = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
+          let basicClean = text
+             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+             .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '');
+          text = basicClean.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
           fullConvertedText = text;
         }
       } else {
