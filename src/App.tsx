@@ -37,7 +37,7 @@ export default function App() {
       ]);
       setConfig(configRes.data);
       setIsWatching(statusRes.data.isWatching);
-      setLogs(logsRes.data);
+      setLogs(Array.isArray(logsRes.data) ? logsRes.data : []);
     } catch (err) {
       setError('Could not connect to backend server.');
     } finally {
@@ -48,7 +48,9 @@ export default function App() {
   const fetchLogs = async () => {
     try {
       const logsRes = await axios.get('/api/logs');
-      setLogs(logsRes.data);
+      if (Array.isArray(logsRes.data)) {
+        setLogs(logsRes.data);
+      }
       
       const statusRes = await axios.get('/api/status');
       setIsWatching(statusRes.data.isWatching);
