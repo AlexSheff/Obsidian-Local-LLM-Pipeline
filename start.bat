@@ -3,17 +3,17 @@ setlocal
 cd /d "%~dp0"
 
 echo ===================================================
-echo   Hermes Local Intelligence - Startup Script
+echo   Obsidian Local LLM Pipeline Local Intelligence - Startup Script
 echo ===================================================
 echo.
 
 echo [1/3] Starting Llama 3.1 Server in a new window...
-start "Hermes Llama Server" cmd /k ".\llm\bin\llama-server.exe -m .\llm\models\Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf -c 6000 -t 6 -ngl -1"
+start "Obsidian Local LLM Pipeline Llama Server" cmd /k ".\llm\bin\llama-server.exe -m .\llm\models\Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf -c 6000 -t 6 -ngl -1"
 
 echo [2/3] Waiting 5 seconds for the AI model to load...
 timeout /t 5 /nobreak > nul
 
-echo [3/3] Starting Hermes Web Dashboard...
+echo [3/3] Starting Obsidian Local LLM Pipeline Web Dashboard...
 start http://localhost:3000
 
 echo.

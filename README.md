@@ -1,8 +1,8 @@
 # Obsidian Local LLM Pipeline
 
-Hermes is an automated, **Zero-Config**, completely local intelligence pipeline designed to ingest, analyze, and categorize raw notes into a strictly formatted PARA (Projects, Areas, Resources, Archives) / Zettelkasten knowledge base using a local LLM via `llama.cpp`.
+Obsidian Local LLM Pipeline is an automated, **Zero-Config**, completely local intelligence pipeline designed to ingest, analyze, and categorize raw notes into a strictly formatted PARA (Projects, Areas, Resources, Archives) / Zettelkasten knowledge base using a local LLM via `llama.cpp`.
 
-This system is fully autonomous. You drop a raw file (`.md`, `.txt`, `.html`, `.json`, `.pdf`, `.docx`, or even binary files/images) into `00_Inbox`, and Hermes will use AI to read the content (or the filename for binaries), generate a highly structured YAML frontmatter (with summary, tags, entities, related projects), move the file to its correct semantic location, and preserve the original hashed file in a system archive.
+This system is fully autonomous. You drop a raw file (`.md`, `.txt`, `.html`, `.json`, `.pdf`, `.docx`, or even binary files/images) into `00_Inbox`, and the pipeline will use AI to read the content (or the filename for binaries), generate a highly structured YAML frontmatter (with summary, tags, entities, related projects), move the file to its correct semantic location, and preserve the original hashed file in a system archive.
 
 ## Key Features
 
@@ -36,7 +36,7 @@ The file watcher (`chokidar`) now supports infinite depth (`depth: 99`). You can
 
 ## Directory & Vault Structure
 
-Hermes generates and expects the following strict hierarchy within your Obsidian Vault:
+The pipeline generates and expects the following strict hierarchy within your Obsidian Vault:
 
 ```text
 D:\Obsidian\User_Vault\
@@ -89,13 +89,13 @@ The installer automatically downloads the **Qwen2.5-Coder-7B-Instruct-Q4_K_M** m
 
 ### Setup Instructions (Windows)
 
-1. **Extract the Pipeline**: Extract the downloaded ZIP to a dedicated folder (e.g., `C:\Hermes-Pipeline`).
+1. **Extract the Pipeline**: Extract the downloaded ZIP to a dedicated folder (e.g., `C:\Obsidian-LLM-Pipeline`).
 2. **Install & Download**: Double-click `install.bat`. 
     - This script will install necessary Node.js packages.
-    - It will automatically download the `llama.cpp` Windows CPU Server and the `Hermes-3` AI model (~2GB) into the `/llm/` directory. *(Note: If you already have the model or engine downloaded in the `/llm/` folder, the installer is smart enough to detect them and instantly skip the download phase).*
+    - It will automatically download the `llama.cpp` Windows CPU Server and the `Qwen2.5-Coder` AI model (~2GB) into the `/llm/` directory. *(Note: If you already have the model or engine downloaded in the `/llm/` folder, the installer is smart enough to detect them and instantly skip the download phase).*
 3. **Launch**: Double-click `start.bat`. 
     - This will spin up the local AI server in a secondary terminal window.
-    - It will automatically launch the Hermes Web Dashboard (`http://localhost:3000`) in your browser.
+    - It will automatically launch the Web Dashboard (`http://localhost:3000`) in your browser.
 
 ### Setup Instructions (Linux / macOS)
 
@@ -131,7 +131,7 @@ If you receive a `GitHub API Error` or `API rate limit exceeded` during the `ins
     - The LLM Server URL defaults to `http://127.0.0.1:8080` (standard for `llama.cpp`).
     - Click **Save Settings**.
 3. **Initialize the Vault (First Time Only)**:
-    - If you are starting fresh, click **Initialize Vault Structure**. This will instantly generate the entire PARA folder tree and internal JSON registries required by Hermes.
+    - If you are starting fresh, click **Initialize Vault Structure**. This will instantly generate the entire PARA folder tree and internal JSON registries required by the pipeline.
 4. **Start the Pipeline**:
     - Click **Start Pipeline**. The watcher indicator will turn green.
 5. **Drop Files**:

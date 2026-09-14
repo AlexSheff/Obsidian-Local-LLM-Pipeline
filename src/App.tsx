@@ -117,7 +117,7 @@ export default function App() {
               <Folder className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold tracking-tight text-neutral-900">Hermes Local Intelligence</h1>
+              <h1 className="text-xl font-semibold tracking-tight text-neutral-900">Obsidian Local LLM Pipeline</h1>
               <p className="text-sm text-neutral-500">Obsidian Inbox Pipeline</p>
             </div>
           </div>

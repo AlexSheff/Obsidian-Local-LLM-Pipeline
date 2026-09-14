@@ -1,7 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 echo "==================================================="
-echo "  Hermes Local Intelligence - Startup Script"
+echo "  Obsidian Local LLM Pipeline Local Intelligence - Startup Script"
 echo "==================================================="
 echo ""
 
@@ -13,7 +13,7 @@ LLAMA_PID=$!
 echo "[2/3] Waiting 5 seconds for the AI model to load..."
 sleep 5
 
-echo "[3/3] Starting Hermes Web Dashboard..."
+echo "[3/3] Starting Obsidian Local LLM Pipeline Web Dashboard..."
 echo "Dashboard running at http://localhost:3000"
 echo "Press Ctrl+C to stop both servers."
 

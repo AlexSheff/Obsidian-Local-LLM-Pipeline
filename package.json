@@ -1,5 +1,5 @@
 {
-  "name": "hermes-obsidian-llm",
+  "name": "obsidian-local-llm-pipeline",
   "version": "3.0.0",
   "description": "An automated, Zero-Config, local intelligence pipeline for Obsidian using local LLMs.",
   "author": "",
