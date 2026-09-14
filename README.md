@@ -2,7 +2,7 @@
 
 Hermes is an automated, **Zero-Config**, completely local intelligence pipeline designed to ingest, analyze, and categorize raw notes into a strictly formatted PARA (Projects, Areas, Resources, Archives) / Zettelkasten knowledge base using a local LLM via `llama.cpp`.
 
-This system is fully autonomous. You drop a raw `.md` or `.txt` file into `00_Inbox`, and Hermes will use AI to read the content, generate a highly structured YAML frontmatter (with summary, tags, entities, related projects), move the file to its correct semantic location, and preserve the original hashed file in a system archive.
+This system is fully autonomous. You drop a raw file (`.md`, `.txt`, `.html`, `.json`, `.pdf`, `.docx`, or even binary files/images) into `00_Inbox`, and Hermes will use AI to read the content (or the filename for binaries), generate a highly structured YAML frontmatter (with summary, tags, entities, related projects), move the file to its correct semantic location, and preserve the original hashed file in a system archive.
 
 ## Key Features
 
