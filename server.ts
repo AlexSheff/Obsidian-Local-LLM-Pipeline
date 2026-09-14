@@ -69,6 +69,18 @@ let currentConfig = {
   llamaUrl: 'http://127.0.0.1:8080'
 };
 
+// Timeout Wrapper for Promises
+const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`Timeout: ${label} took longer than ${ms}ms`)), ms);
+    });
+    return Promise.race([
+        promise,
+        timeoutPromise
+    ]).finally(() => clearTimeout(timeoutId));
+};
+
 try {
   if (fs.existsSync(CONFIG_FILE)) {
     const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
@@ -180,7 +192,7 @@ async function processFile(filePath: string) {
   } else if (isPdf) {
     try {
       const dataBuffer = await fsPromises.readFile(filePath);
-      const pdfData = await pdfParse(dataBuffer);
+      const pdfData = await withTimeout(pdfParse(dataBuffer), 30000, 'PDF Parsing');
       const text = pdfData.text || '';
       fullConvertedText = text;
       textToProcess = text.length <= 4000 ? text : text.slice(0, 4000) + '\n\n...[CONTENT OMITTED]...';
@@ -190,7 +202,7 @@ async function processFile(filePath: string) {
     }
   } else if (isDocx) {
     try {
-      const result = await mammoth.convertToHtml({ path: filePath });
+      const result = await withTimeout(mammoth.convertToHtml({ path: filePath }), 30000, 'DOCX Parsing');
       const html = result.value || '';
       const mdText = turndownService.turndown(html);
       fullConvertedText = mdText;
@@ -202,8 +214,14 @@ async function processFile(filePath: string) {
   } else {
     // Is Text/HTML/JSON
     try {
-      // Stream aware reading could be added here for giant text files, but readFile is OK for standard notes.
-      let originalContent = await fsPromises.readFile(filePath, 'utf-8');
+      // Memory-safe, size-aware reading: only read first 250KB max to avoid OOM on huge logs
+      const MAX_TEXT_READ = 250 * 1024;
+      const readStream = fs.createReadStream(filePath, { start: 0, end: MAX_TEXT_READ });
+      let originalContent = '';
+      for await (const chunk of readStream) {
+         originalContent += chunk;
+      }
+      
       let text = originalContent.replace(/\uFFFD/g, ''); 
       
       if (fileExtension === '.md') {
@@ -485,31 +503,57 @@ summary: "${(data.summary || '').replace(/"/g, '\\"')}"
     throw new Error(`Failed to archive original file: ${renameErr.message}`);
   }
   
-  // SERIALIZED REGISTRY UPDATE (Mutex)
+  // SERIALIZED REGISTRY UPDATE (Mutex + Avoiding full JSON.parse)
   const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
   const unlock = await registryMutex.lock();
   try {
-    let registry: any[] = [];
-    if (fs.existsSync(registryPath)) {
-      try {
-        const regContent = await fsPromises.readFile(registryPath, 'utf-8');
-        const parsed = JSON.parse(regContent);
-        if (Array.isArray(parsed)) registry = parsed;
-      } catch(e) {
-        addLog(`Could not read registry, re-initializing.`, 'error');
-      }
-    }
-    registry.push({
+    const newEntry = {
       hash,
       original_path: `00_Inbox/${relativePath}`,
       destination: `${destFolder}/${mdFilename}`,
       category: category,
       processed_at: new Date().toISOString()
-    });
-    // Atomic registry write
-    const tmpRegPath = registryPath + '.tmp';
-    await fsPromises.writeFile(tmpRegPath, JSON.stringify(registry, null, 2));
-    await fsPromises.rename(tmpRegPath, registryPath);
+    };
+    
+    const entryStr = JSON.stringify(newEntry, null, 2);
+    
+    if (!fs.existsSync(registryPath)) {
+      await fsPromises.writeFile(registryPath, `[\n${entryStr}\n]`);
+    } else {
+      // Append-like injection for standard JSON array to save memory
+      const stats = await fsPromises.stat(registryPath);
+      if (stats.size > 2) {
+         // File has content like [ ... ]
+         // We open the file, chop the last bracket ']', append the new item, and close the bracket.
+         const fd = await fsPromises.open(registryPath, 'r+');
+         
+         // Search for the last ']' bracket
+         let position = stats.size - 1;
+         let found = false;
+         const buffer = Buffer.alloc(1);
+         while (position >= 0) {
+            await fd.read(buffer, 0, 1, position);
+            if (buffer.toString('utf-8') === ']') {
+               found = true;
+               break;
+            }
+            position--;
+         }
+         
+         if (found) {
+             const appendStr = `,\n${entryStr}\n]`;
+             await fd.write(appendStr, position);
+         } else {
+             // Fallback if badly formatted
+             await fsPromises.writeFile(registryPath, `[\n${entryStr}\n]`);
+         }
+         await fd.close();
+      } else {
+         await fsPromises.writeFile(registryPath, `[\n${entryStr}\n]`);
+      }
+    }
+  } catch (err: any) {
+     addLog(`Failed to update registry efficiently: ${err.message}`, 'error');
   } finally {
     unlock();
   }
@@ -673,8 +717,33 @@ app.get('/api/registry', async (req, res) => {
   if (fs.existsSync(registryPath)) {
     const unlock = await registryMutex.lock();
     try {
-      const regContent = await fsPromises.readFile(registryPath, 'utf-8');
-      res.json(JSON.parse(regContent));
+      let registry: any[] = [];
+      const stream = fs.createReadStream(registryPath, { encoding: 'utf-8' });
+      let remainder = '';
+      let isFirstChunk = true;
+      
+      for await (const chunk of stream) {
+         let data = remainder + chunk;
+         if (isFirstChunk) {
+            data = data.replace(/^[\s\n]*\[\s*/, '');
+            isFirstChunk = false;
+         }
+         const parts = data.split('},');
+         remainder = parts.pop() || '';
+         for (const part of parts) {
+            try {
+               const cleanPart = part.trim() + '}';
+               if (cleanPart.length > 2) registry.push(JSON.parse(cleanPart));
+            } catch(e) {}
+         }
+      }
+      if (remainder) {
+         remainder = remainder.replace(/\]\s*$/, '').trim();
+         if (remainder) {
+             try { registry.push(JSON.parse(remainder)); } catch(e) {}
+         }
+      }
+      res.json(registry);
     } catch (e) {
       res.json([]);
     } finally {
@@ -692,11 +761,41 @@ app.post('/api/generate-digest', async (req, res) => {
   if (!fs.existsSync(registryPath)) return res.status(400).json({ error: 'No files processed yet' });
   
   try {
-    let registry = [];
+    let registry: any[] = [];
     const unlock = await registryMutex.lock();
     try {
-      const regContent = await fsPromises.readFile(registryPath, 'utf-8');
-      registry = JSON.parse(regContent);
+      // Memory-safe registry read (stream-based split, avoiding massive single JSON string parsing)
+      const stream = fs.createReadStream(registryPath, { encoding: 'utf-8' });
+      let remainder = '';
+      let isFirstChunk = true;
+      
+      for await (const chunk of stream) {
+         let data = remainder + chunk;
+         if (isFirstChunk) {
+            data = data.replace(/^[\s\n]*\[\s*/, '');
+            isFirstChunk = false;
+         }
+         
+         const parts = data.split('},');
+         remainder = parts.pop() || '';
+         
+         for (const part of parts) {
+            try {
+               // Re-add the chopped brace
+               const cleanPart = part.trim() + '}';
+               if (cleanPart.length > 2) {
+                   registry.push(JSON.parse(cleanPart));
+               }
+            } catch(e) {}
+         }
+      }
+      
+      if (remainder) {
+         remainder = remainder.replace(/\]\s*$/, '').trim();
+         if (remainder) {
+             try { registry.push(JSON.parse(remainder)); } catch(e) {}
+         }
+      }
     } finally {
       unlock();
     }
