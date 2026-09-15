@@ -168,6 +168,17 @@ async function gracefulShutdown() {
 process.on('SIGINT', gracefulShutdown);
 process.on('SIGTERM', gracefulShutdown);
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  // addLog can't easily be used directly without a mock if we're outside, but wait, addLog is a global function in server.ts
+  addLog(`Uncaught Exception: ${err.message}`, 'error');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  addLog(`Unhandled Rejection: ${reason}`, 'error');
+});
+
 
 // --- Main Processing Logic ---
 async function processFile(filePath: string) {
