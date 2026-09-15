@@ -290,7 +290,7 @@ Analyze the text and output a JSON object.
 DO NOT output any markdown, explanations, or backticks. Return ONLY raw JSON.
 
 Extract these exactly 5 fields:
-1. "title" (string): The title of the document.
+1. "title" (string): Create a highly descriptive title based on the core topic, entities, or event discussed (e.g. 'Interview with John Doe', 'Project Apollo Specs'). DO NOT just copy the filename or use generic words like 'Transcript'.
 2. "summary" (string): 1-2 sentence summary of the content.
 3. "category" (string): MUST be one of: "People", "Organizations", "Knowledge", "Projects", "Journal", "Ideas", "Inbox". Pick the best fit.
 4. "tags" (array of strings): Relevant topic tags (no '#' needed).
