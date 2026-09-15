@@ -1,7 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 echo "==================================================="
-echo "  Obsidian Local LLM Pipeline Local Intelligence - Startup Script"
+echo "  Obsidian Local LLM Pipeline - Startup Script"
 echo "==================================================="
 echo ""
 

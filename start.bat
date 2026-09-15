@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ===================================================
-echo   Obsidian Local LLM Pipeline Local Intelligence - Startup Script
+echo   Obsidian Local LLM Pipeline - Startup Script
 echo ===================================================
 echo.
 

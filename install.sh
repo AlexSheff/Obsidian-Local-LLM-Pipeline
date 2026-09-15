@@ -2,7 +2,7 @@
 cd "$(dirname "$0")"
 
 echo "==================================================="
-echo "  Obsidian Local LLM Pipeline Local Intelligence - Installation Script"
+echo "  Obsidian Local LLM Pipeline - Installation Script"
 echo "==================================================="
 echo ""
 echo "Checking for Node.js..."
