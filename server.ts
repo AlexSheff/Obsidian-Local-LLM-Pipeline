@@ -34,10 +34,7 @@ import {
 import { llamaManager } from './src/server/llamaManager';
 import { auditDirectoryProject, applyRevisionPlan } from './src/server/directoryRevisor';
 import {
-  classifyContentType,
-  routeFolderWithDecisionModel,
   decide,
-  STANDARD_CONTENT_TYPES,
   isDecisionServerReachable,
   checkDecisionServerHealth
 } from './src/server/decisionModel';
@@ -54,6 +51,8 @@ import {
 } from './src/server/language';
 import { checkGhostNote, isJunkFile } from './src/server/documentExtractor';
 import { triageManager } from './src/server/triageManager';
+import { z } from 'zod';
+import { generateStructured, GenerationError } from './src/server/llm/generate';
 import { routeHierarchical, HierarchicalRouterConfig } from './src/server/llm/hierarchicalRouter';
 import { calibrateThreshold, isCalibrated, applyCalibrationGateOnLoad } from './src/server/calibration';
 import { loadProjectsRegistry, bootstrapProjectsYaml } from './src/server/projectsRegistry';
@@ -232,6 +231,53 @@ export function loadConfigFromFile(configFilePath: string = CONFIG_FILE, baseCon
 }
 
 currentConfig = loadConfigFromFile(CONFIG_FILE, currentConfig);
+
+export async function buildRouterConfig(
+  cfg: typeof currentConfig = currentConfig,
+  thresholdOverride?: number
+): Promise<HierarchicalRouterConfig> {
+  const projects = await loadProjectsRegistry(cfg.vaultPath);
+  return {
+    topLevelCategories: cfg.topLevelCategories || [
+      'Project',
+      'Essay/Knowledge',
+      'Dialogue/Transcript',
+      'Poem',
+      'Screenplay/Script',
+      'Idea',
+      'Journal/Diary',
+      'Technical/Code'
+    ],
+    typeRoutes: cfg.typeRoutes || {
+      'Essay/Knowledge': '03_Knowledge/Essays',
+      'Dialogue/Transcript': '03_Knowledge/Dialogues',
+      'Poem': '03_Knowledge/Poems',
+      'Screenplay/Script': '03_Knowledge/Scripts',
+      'Idea': '05_Ideas/Inbox',
+      'Journal/Diary': '04_Journal/Daily',
+      'Technical/Code': '03_Knowledge/Technical'
+    },
+    projects,
+    decisionModelUrl: cfg.decisionModelUrl || 'http://127.0.0.1:1234',
+    threshold: thresholdOverride ?? cfg.decisionConfidenceThreshold ?? 0.80
+  };
+}
+
+export function setCurrentConfigForTest(partial: Partial<typeof currentConfig>) {
+  currentConfig = { ...currentConfig, ...partial };
+}
+
+export function getCurrentConfigForTest() {
+  return currentConfig;
+}
+
+export function setVaultStructureForTest(folders: string[]) {
+  currentVaultStructure = [...folders];
+}
+
+export function getDecisionTriageQueueForTest() {
+  return decisionTriageQueue;
+}
 
 // --- Queue System with Exponential Backoff ---
 interface QueueItem {
@@ -719,7 +765,30 @@ async function processRefineQueue() {
   }
 }
 
-async function fastFallbackRefine(filename: string, body: string): Promise<string> {
+const RefineNoteOutputSchema = z.object({
+  improved_title: z.string().optional(),
+  improved_tags: z.preprocess(
+    (val) => (typeof val === 'string' ? val.split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(val) ? val : []),
+    z.array(z.string()).default([])
+  ),
+  suggested_path: z.string().optional()
+});
+
+const ProcessInboxOutputSchema = z.object({
+  title: z.string().min(1),
+  summary: z.string().optional().default(''),
+  category: z.string().min(1),
+  tags: z.preprocess(
+    (val) => (typeof val === 'string' ? val.split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(val) ? val : []),
+    z.array(z.string()).default([])
+  ),
+  related_concepts: z.preprocess(
+    (val) => (typeof val === 'string' ? val.split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(val) ? val : []),
+    z.array(z.string()).optional().default([])
+  )
+});
+
+async function fastFallbackRefine(filename: string, body: string): Promise<z.infer<typeof RefineNoteOutputSchema>> {
   const microSnippet = safeSlice(body, 0, 700);
   const lang = detectDocumentLanguage(body, filename);
   const microPrompt = `You are a taxonomy classifier. Classify this note into a PARA folder and generate 5 tags.
@@ -734,27 +803,18 @@ Return ONLY raw JSON with these 2 fields (no explanation, no markdown):
   "suggested_path": "03_Knowledge/Topics"
 }`;
 
-  const fbController = new AbortController();
-  const fbTimeoutId = setTimeout(() => fbController.abort(), 90000);
-  try {
-    const payload = sanitizePayloadForLlm({
-      messages: [{ role: 'user', content: microPrompt }],
-      temperature: 0.1,
-      max_tokens: 200,
-      stream: false
-    });
-    const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, payload, {
-      signal: fbController.signal
-    });
-    clearTimeout(fbTimeoutId);
-    return response.data.choices[0].message.content;
-  } catch (err: any) {
-    clearTimeout(fbTimeoutId);
-    throw err;
-  }
+  return await generateStructured({
+    endpointUrl: currentConfig.llamaUrl,
+    messages: [{ role: 'user', content: microPrompt }],
+    schema: RefineNoteOutputSchema,
+    schemaName: 'refine_fallback_schema',
+    timeoutMs: 90000,
+    temperature: 0.1,
+    maxTokens: 200
+  });
 }
 
-async function refineFile(filePath: string, options?: { dryRun?: boolean; snapshot?: SnapshotSession; smartRename?: boolean }) {
+export async function refineFile(filePath: string, options?: { dryRun?: boolean; snapshot?: SnapshotSession; smartRename?: boolean }) {
   const originalFilename = path.basename(filePath);
   addLog(`Refining file: ${originalFilename}`);
 
@@ -780,91 +840,117 @@ async function refineFile(filePath: string, options?: { dryRun?: boolean; snapsh
   const maxChars = currentConfig.maxContextChars || 1500;
   const textToProcess = safeTruncateHeadTail(body, maxChars, 0.75);
 
-  // Cap existing folder list to avoid huge context prefill delays
-  let existingFoldersContext = '';
-  if (currentVaultStructure.length > 0) {
-    const sampleFolders = currentVaultStructure.slice(0, 30);
-    existingFoldersContext = "\nEXISTING FOLDERS IN VAULT (Prioritize placing notes in these if relevant):\n- " + sampleFolders.join("\n- ");
-    if (currentVaultStructure.length > 30) {
-      existingFoldersContext += `\n- ... (${currentVaultStructure.length - 30} other folders)`;
-    }
-  }
-
-  // Jev-Style Decision Model integration (Tier-1 Classification & Routing)
+  // Jev-Style Decision Model integration (Two-Tier Hierarchical Classification & Routing, D-LIVE)
   let decisionGuidance = '';
-  if (currentConfig.enableDecisionModel && currentConfig.decisionModelUrl) {
+  let hierarchicalRouteResult: Awaited<ReturnType<typeof routeHierarchical>> | null = null;
+  if ((currentConfig.enableDecisionModel || currentConfig.decisionMode === 'fast_routing') && currentConfig.decisionModelUrl) {
     const isJevOnline = await isDecisionServerReachable(currentConfig.decisionModelUrl, 1000);
     if (!isJevOnline) {
       // Quietly skip without latency penalty
     } else {
       try {
-        const jevTypeResult = await classifyContentType(
-          currentConfig.decisionModelUrl,
+        const routerConfig = await buildRouterConfig(currentConfig);
+        const noteTitle = (parsedNote.data.title as string) || originalFilename.replace(/\.md$/i, '');
+        const routeResult = await routeHierarchical(
           body,
           originalFilename,
-          STANDARD_CONTENT_TYPES,
-          10000
+          noteTitle,
+          routerConfig,
+          { timeoutMs: 10000 }
         );
-        addLog(`[Jev Decision] Content Type for "${originalFilename}": ${jevTypeResult.type} (${Math.round(jevTypeResult.confidence * 100)}%)`, 'info');
+        hierarchicalRouteResult = routeResult;
 
-        if (currentVaultStructure.length > 0) {
-          const candidateFolders = currentVaultStructure.slice(0, 20);
-          const jevRouteResult = await routeFolderWithDecisionModel(
-            currentConfig.decisionModelUrl,
-            body,
-            originalFilename,
-            candidateFolders,
-            currentConfig.decisionConfidenceThreshold || 0.80,
-            10000
+        addLog(
+          `[Jev Decision] Hierarchical Route for "${originalFilename}": ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}%) -> "${routeResult.suggestedFolder}" (${Math.round(routeResult.totalConfidence * 100)}% total conf)`,
+          'info'
+        );
+
+        // Check if confidence is ambiguous -> enqueue into Triage
+        if (routeResult.needsReview) {
+          addLog(
+            `[Jev Decision] Ambiguous confidence (${Math.round(routeResult.totalConfidence * 100)}% < ${Math.round(routerConfig.threshold * 100)}%). Queued for Triage Review.`,
+            'warn'
           );
-
-          addLog(`[Jev Decision] Target Folder for "${originalFilename}": ${jevRouteResult.suggestedFolder} (${Math.round(jevRouteResult.confidence * 100)}% conf)`, 'info');
-
-          // Check if confidence is ambiguous -> enqueue into Triage
-          if (jevRouteResult.needsReview) {
-            addLog(`[Jev Decision] Ambiguous confidence (${Math.round(jevRouteResult.confidence * 100)}% < ${Math.round((currentConfig.decisionConfidenceThreshold || 0.8) * 100)}%). Queued for Triage Review.`, 'warn');
-            decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath);
-            decisionTriageQueue.unshift({
-              id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          const distribution = [
+            { letter: 'A', option: routeResult.suggestedFolder, probability: routeResult.totalConfidence },
+            { letter: 'B', option: routeResult.level2Selection, probability: routeResult.level2Confidence }
+          ];
+          decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath);
+          decisionTriageQueue.unshift({
+            id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            filePath,
+            relativePath: currentRelPath,
+            filename: originalFilename,
+            contentType: routeResult.level1Category,
+            confidence: routeResult.totalConfidence,
+            topFolder: routeResult.suggestedFolder,
+            distribution,
+            timestamp: new Date().toISOString()
+          });
+          if (decisionTriageQueue.length > 100) decisionTriageQueue.pop();
+          triageManager.enqueue(
+            {
               filePath,
               relativePath: currentRelPath,
               filename: originalFilename,
-              contentType: jevTypeResult.type,
-              confidence: jevRouteResult.confidence,
-              topFolder: jevRouteResult.suggestedFolder,
-              distribution: jevRouteResult.distribution.slice(0, 5),
-              timestamp: new Date().toISOString()
-            });
-            if (decisionTriageQueue.length > 100) decisionTriageQueue.pop();
-          }
-
-          // If in Fast-Routing mode and high confidence: route immediately without waiting for generative LLM!
-          if (currentConfig.decisionMode === 'fast_routing' && jevRouteResult.isHighConfidence) {
-            addLog(`[Jev Fast-Route] High confidence (${Math.round(jevRouteResult.confidence * 100)}%). Routing directly to "${jevRouteResult.suggestedFolder}" without generative latency.`, 'success');
-
-            if (!options?.dryRun) {
-              if (options?.snapshot) {
-                await options.snapshot.backup(filePath);
-              }
-              parsedNote.data.ai_refined = true;
-              (parsedNote.data as any).ai_content_type = jevTypeResult.type;
-              const finalFileContent = serializeNote(parsedNote.data, parsedNote.body);
-              const targetDir = path.join(currentConfig.vaultPath, jevRouteResult.suggestedFolder);
-              await fsPromises.mkdir(targetDir, { recursive: true });
-              const destPath = path.join(targetDir, originalFilename);
-              await fsPromises.writeFile(filePath, finalFileContent, 'utf-8');
-              if (filePath !== destPath) {
-                await fsPromises.rename(filePath, destPath);
-              }
-            }
-            return;
-          }
-
-          decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (CALIBRATED GROUND TRUTH):\n- Detected Type: ${jevTypeResult.type} (${Math.round(jevTypeResult.confidence * 100)}% confidence)\n- Suggested Folder: ${jevRouteResult.suggestedFolder} (${Math.round(jevRouteResult.confidence * 100)}% confidence)\n- Alternatives: ${jevRouteResult.distribution.slice(1, 3).map((d: any) => `${d.option} (${Math.round(d.probability * 100)}%)`).join(', ')}\nPrioritize placing this note into '${jevRouteResult.suggestedFolder}'.`;
+              contentType: routeResult.level1Category,
+              confidence: routeResult.totalConfidence,
+              topFolder: routeResult.suggestedFolder,
+              distribution
+            },
+            routerConfig.typeRoutes
+          );
         }
+
+        // If in Fast-Routing mode and high confidence: route immediately without waiting for generative LLM!
+        if (currentConfig.decisionMode === 'fast_routing' && routeResult.isHighConfidence) {
+          const targetDir = path.join(currentConfig.vaultPath, routeResult.suggestedFolder);
+          if (!isPathInsideVault(targetDir, currentConfig.vaultPath)) {
+            throw new Error(`Security Error: Target folder "${routeResult.suggestedFolder}" is outside vault.`);
+          }
+
+          addLog(
+            `[Jev Fast-Route] High confidence (${Math.round(routeResult.totalConfidence * 100)}%). Routing directly to "${routeResult.suggestedFolder}"${routeResult.projectLink ? ` with project=${routeResult.projectLink}` : ''} without generative latency.`,
+            'success'
+          );
+
+          if (!options?.dryRun) {
+            if (options?.snapshot) {
+              await options.snapshot.backup(filePath);
+            }
+            parsedNote.data.ai_refined = true;
+            (parsedNote.data as any).ai_content_type = routeResult.level1Category;
+            if (routeResult.projectLink) {
+              parsedNote.data.project = routeResult.projectLink;
+            }
+            const finalFileContent = serializeNote(parsedNote.data, parsedNote.body);
+            await fsPromises.mkdir(targetDir, { recursive: true });
+            const destPath = path.join(targetDir, originalFilename);
+            if (!isPathInsideVault(destPath, currentConfig.vaultPath)) {
+              throw new Error(`Security Error: Destination path "${destPath}" is outside vault.`);
+            }
+            await fsPromises.writeFile(filePath, finalFileContent, 'utf-8');
+            if (path.resolve(filePath) !== path.resolve(destPath)) {
+              await fsPromises.rename(filePath, destPath);
+            }
+          }
+          return;
+        }
+
+        decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (CALIBRATED GROUND TRUTH):\n- Detected Category: ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}% confidence)\n- Suggested Folder: ${routeResult.suggestedFolder} (${Math.round(routeResult.totalConfidence * 100)}% confidence)\n- Selection Detail: ${routeResult.level2Selection} (${Math.round(routeResult.level2Confidence * 100)}% confidence)${routeResult.projectLink ? `\n- Project Link: ${routeResult.projectLink} (Non-core project note: keep in genre folder '${routeResult.suggestedFolder}')` : ''}\nPrioritize placing this note into '${routeResult.suggestedFolder}'.`;
       } catch (decisionErr: any) {
         addLog(`Decision model check skipped: ${decisionErr.message}`, 'warn');
       }
+    }
+  }
+
+  // Degraded fallback mode without decision model: only pass truncated folder list if decisionGuidance is unavailable
+  let existingFoldersContext = '';
+  if (!decisionGuidance && currentVaultStructure.length > 0) {
+    const sampleFolders = currentVaultStructure.slice(0, 30);
+    existingFoldersContext = "\nEXISTING FOLDERS IN VAULT (Degraded fallback mode without Decision Model):\n- " + sampleFolders.join("\n- ");
+    if (currentVaultStructure.length > 30) {
+      existingFoldersContext += `\n- ... (${currentVaultStructure.length - 30} other folders)`;
     }
   }
 
@@ -932,50 +1018,32 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
 }`;
 
   const timeoutMs = (currentConfig.timeoutSeconds || 240) * 1000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  let responseContent = '';
+  let data: z.infer<typeof RefineNoteOutputSchema>;
   try {
-    const payload = sanitizePayloadForLlm({
+    data = await generateStructured({
+      endpointUrl: currentConfig.llamaUrl,
       messages: [{ role: 'user', content: prompt }],
+      schema: RefineNoteOutputSchema,
+      schemaName: 'refine_note_schema',
+      timeoutMs,
       temperature: 0.1,
-      max_tokens: 350,
-      stream: false
+      maxTokens: 350
     });
-    const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, payload, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    responseContent = response.data.choices[0].message.content;
   } catch (llmError: any) {
-    clearTimeout(timeoutId);
-    if (llmError.name === 'CanceledError' || llmError.code === 'ECONNABORTED' || controller.signal.aborted) {
+    const isTimeout =
+      llmError.message?.includes('canceled') ||
+      llmError.message?.includes('aborted') ||
+      llmError.message?.includes('timeout');
+    if (isTimeout) {
       addLog(`Primary prompt timed out after ${currentConfig.timeoutSeconds || 240}s on ${originalFilename}. Attempting quick compact fallback...`, 'warn');
       try {
-        responseContent = await fastFallbackRefine(originalFilename, body);
+        data = await fastFallbackRefine(originalFilename, body);
       } catch (fbErr: any) {
         throw new Error(`LLM Refine Request timed out (${currentConfig.timeoutSeconds || 240}s) and fallback failed: ${fbErr.message}`);
       }
     } else {
-      throw new Error(`LLM Refine Request failed: ${llmError.message}`);
+      throw llmError;
     }
-  }
-
-  // Strip <think> tags if reasoning model is used
-  let cleanContent = responseContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-  // Parse JSON
-  let jsonStr = cleanContent;
-  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-  if (jsonMatch) jsonStr = jsonMatch[0];
-  
-  let data: any = {};
-  try {
-    let cleanedJsonStr = jsonStr.replace(/,\s*([\}\]])/g, '$1').replace(/\n/g, ' ');
-    data = JSON.parse(cleanedJsonStr);
-  } catch (parseError: any) {
-    throw new Error(`Failed to parse LLM JSON: ${parseError.message}`);
   }
 
   const newTags = Array.isArray(data.improved_tags) ? data.improved_tags : [];
@@ -985,6 +1053,9 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   const tagsWithLanguage = ensureLanguageTags(parsedNewTags, body, originalFilename);
   mergeTags(parsedNote.data, tagsWithLanguage);
   parsedNote.data.ai_refined = true;
+  if (hierarchicalRouteResult?.projectLink) {
+    parsedNote.data.project = hierarchicalRouteResult.projectLink;
+  }
 
   // Determine refined filename (Smart Renaming)
   let targetFilename = originalFilename;
@@ -1003,6 +1074,9 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   const finalFileContent = serializeNote(parsedNote.data, parsedNote.body);
 
   let suggestedPath = (data.suggested_path || '03_Knowledge/Unsorted').trim();
+  if (hierarchicalRouteResult && (hierarchicalRouteResult.isHighConfidence || hierarchicalRouteResult.projectLink)) {
+    suggestedPath = hierarchicalRouteResult.suggestedFolder;
+  }
   
   // Clean up path separators and extensions
   suggestedPath = suggestedPath.replace(/\\/g, '/').replace(/^\/+/g, '').replace(/\/+$/g, '');
@@ -1030,6 +1104,9 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   }
 
   const destDir = path.join(currentConfig.vaultPath, suggestedPath);
+  if (!isPathInsideVault(destDir, currentConfig.vaultPath)) {
+    throw new Error(`Security Error: Target folder "${suggestedPath}" is outside vault.`);
+  }
   const destMdPath = path.join(destDir, targetFilename);
 
   // Write content to current file first
@@ -1149,9 +1226,10 @@ process.on('unhandledRejection', (reason, promise) => {
 
 
 // --- Main Processing Logic ---
-async function processFile(filePath: string) {
+export async function processFile(filePath: string) {
   const originalFilename = path.basename(filePath);
   const fileExtension = path.extname(originalFilename).toLowerCase();
+  let parsedIncomingNote: ReturnType<typeof parseNote> | null = null;
   
   const textExtensions = ['.md', '.txt', '.csv', '.rtf', '.html', '.json', '.xml', '.py', '.js', '.ts', '.yaml', '.yml'];
   const pdfExtensions = ['.pdf'];
@@ -1206,7 +1284,8 @@ async function processFile(filePath: string) {
       let text = originalContent.replace(/\uFFFD/g, ''); 
       
       if (fileExtension === '.md') {
-        text = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '');
+        parsedIncomingNote = parseNote(text);
+        text = parsedIncomingNote.body;
         fullConvertedText = text;
       } else if (fileExtension === '.json') {
         try {
@@ -1280,19 +1359,125 @@ async function processFile(filePath: string) {
     }
   }
   
-  addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
-  
   // Extract any inline tags from content
   const detectedTags = extractTags('', fullConvertedText, originalFilename);
   const detectedTagsStr = detectedTags.length > 0 ? detectedTags.map(t => `#${t}`).join(', ') : 'None';
 
-  const existingFoldersContext = currentVaultStructure.length > 0 
-    ? "\nEXISTING FOLDERS IN VAULT (Prefer matching these if relevant):\n- " + currentVaultStructure.join("\n- ") 
+  // Jev-Style Decision Model integration for incoming Inbox files (D-LIVE)
+  let decisionGuidance = '';
+  let inboxRouteResult: Awaited<ReturnType<typeof routeHierarchical>> | null = null;
+  if ((currentConfig.enableDecisionModel || currentConfig.decisionMode === 'fast_routing') && currentConfig.decisionModelUrl) {
+    const isJevOnline = await isDecisionServerReachable(currentConfig.decisionModelUrl, 1000);
+    if (isJevOnline) {
+      try {
+        const routerConfig = await buildRouterConfig(currentConfig);
+        const initialTitle =
+          (parsedIncomingNote?.data?.title as string) || originalFilename.replace(/\.[^/.]+$/, '');
+        const routeResult = await routeHierarchical(
+          fullConvertedText,
+          originalFilename,
+          initialTitle,
+          routerConfig,
+          { timeoutMs: 10000 }
+        );
+        inboxRouteResult = routeResult;
+
+        addLog(
+          `[Jev Decision] Inbox Route for "${originalFilename}": ${routeResult.level1Category} -> "${routeResult.suggestedFolder}" (${Math.round(routeResult.totalConfidence * 100)}% conf)`,
+          'info'
+        );
+
+        const currentRelPath = path.relative(currentConfig.vaultPath, path.dirname(filePath)).replace(/\\/g, '/');
+        if (routeResult.needsReview) {
+          const distribution = [
+            { letter: 'A', option: routeResult.suggestedFolder, probability: routeResult.totalConfidence },
+            { letter: 'B', option: routeResult.level2Selection, probability: routeResult.level2Confidence }
+          ];
+          decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath);
+          decisionTriageQueue.unshift({
+            id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            filePath,
+            relativePath: currentRelPath,
+            filename: originalFilename,
+            contentType: routeResult.level1Category,
+            confidence: routeResult.totalConfidence,
+            topFolder: routeResult.suggestedFolder,
+            distribution,
+            timestamp: new Date().toISOString()
+          });
+          if (decisionTriageQueue.length > 100) decisionTriageQueue.pop();
+          triageManager.enqueue(
+            {
+              filePath,
+              relativePath: currentRelPath,
+              filename: originalFilename,
+              contentType: routeResult.level1Category,
+              confidence: routeResult.totalConfidence,
+              topFolder: routeResult.suggestedFolder,
+              distribution
+            },
+            routerConfig.typeRoutes
+          );
+        }
+
+        if (currentConfig.decisionMode === 'fast_routing' && routeResult.isHighConfidence) {
+          const targetDir = path.join(currentConfig.vaultPath, routeResult.suggestedFolder);
+          if (!isPathInsideVault(targetDir, currentConfig.vaultPath)) {
+            throw new Error(`Security Error: Target folder "${routeResult.suggestedFolder}" is outside vault.`);
+          }
+
+          addLog(
+            `[Jev Fast-Route] High confidence (${Math.round(routeResult.totalConfidence * 100)}%). Routing "${originalFilename}" directly to "${routeResult.suggestedFolder}" without generative LLM.`,
+            'success'
+          );
+
+          const fastTitle = sanitizeTitle(initialTitle, originalFilename);
+          const fastMdFilename = `${fastTitle}.md`;
+          const tagsWithLang = ensureLanguageTags(detectedTags, fullConvertedText, originalFilename);
+          const fastData: Record<string, unknown> = {
+            ...(parsedIncomingNote?.data || {}),
+            title: fastTitle,
+            category: routeResult.suggestedFolder,
+            tags: tagsWithLang,
+            ai_refined: true,
+            ai_processed: true,
+            ai_content_type: routeResult.level1Category
+          };
+          if (routeResult.projectLink) {
+            fastData.project = routeResult.projectLink;
+          }
+
+          await fsPromises.mkdir(targetDir, { recursive: true });
+          const destPath = path.join(targetDir, fastMdFilename);
+          if (!isPathInsideVault(destPath, currentConfig.vaultPath)) {
+            throw new Error(`Security Error: Destination path "${destPath}" is outside vault.`);
+          }
+          const finalFastContent = serializeNote(fastData, fullConvertedText);
+          await fsPromises.writeFile(destPath, finalFastContent, 'utf-8');
+          if (path.resolve(filePath) !== path.resolve(destPath)) {
+            await fsPromises.unlink(filePath).catch(() => null);
+          }
+          return;
+        }
+
+        decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (CALIBRATED GROUND TRUTH):\n- Detected Category: ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}% confidence)\n- Suggested Folder: ${routeResult.suggestedFolder} (${Math.round(routeResult.totalConfidence * 100)}% confidence)\n- Selection Detail: ${routeResult.level2Selection} (${Math.round(routeResult.level2Confidence * 100)}% confidence)${routeResult.projectLink ? `\n- Project Link: ${routeResult.projectLink} (Non-core project note: keep in genre folder '${routeResult.suggestedFolder}')` : ''}\nPrioritize placing this note into '${routeResult.suggestedFolder}'.`;
+      } catch (decisionErr: any) {
+        addLog(`Decision model check skipped on Inbox file: ${decisionErr.message}`, 'warn');
+      }
+    }
+  }
+
+  addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
+
+  // Degraded fallback mode without decision model: only pass folder list when decisionGuidance is empty
+  const existingFoldersContext = !decisionGuidance && currentVaultStructure.length > 0 
+    ? "\nEXISTING FOLDERS IN VAULT (Degraded fallback mode without Decision Model):\n- " + currentVaultStructure.slice(0, 30).join("\n- ") 
     : "";
 
   const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using PARA (Projects, Areas, Resources/Knowledge, Archives).
 Analyze this new incoming file from the Inbox and classify it with flawless precision.
 DO NOT output any markdown, explanations, or backticks. Return ONLY raw JSON.
+${decisionGuidance}
 
 ### NOTE INFORMATION:
 - Filename: ${originalFilename}
@@ -1350,70 +1535,51 @@ Extract these exactly 5 fields in valid JSON format:
   "related_concepts": ["Concept 1", "Concept 2", "Concept 3"]
 }`;
 
-  let responseContent = '';
   const timeoutMs = (currentConfig.timeoutSeconds || 240) * 1000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
-  try {
-    const payload = sanitizePayloadForLlm({
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 350,
-      stream: false
-    });
-    
-    const response = await axios.post(`${currentConfig.llamaUrl}/v1/chat/completions`, payload, { 
-      signal: controller.signal 
-    });
-    
-    clearTimeout(timeoutId);
-    responseContent = response.data.choices[0].message.content;
-  } catch (llmError: any) {
-    clearTimeout(timeoutId);
-    if (llmError.name === 'CanceledError' || llmError.code === 'ECONNABORTED' || controller.signal.aborted) {
-       throw new Error(`LLM Error: Request timed out after ${currentConfig.timeoutSeconds || 240} seconds.`);
-    }
-    if (llmError.response && llmError.response.status === 400) {
-        throw new Error(`LLM Error 400: Context length exceeded or invalid format.`);
-    }
-    if (llmError.code === 'ECONNREFUSED') {
-      throw new Error(`LLM Server is not running at ${currentConfig.llamaUrl}.`);
-    }
-    throw new Error(`LLM request failed: ${llmError.message}`);
-  }
-  
-  // Strip <think> tags if reasoning model is used
-  let cleanContent = responseContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  let data: z.infer<typeof ProcessInboxOutputSchema>;
 
-  // Robust JSON Extraction
-  let jsonStr = cleanContent;
-  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    jsonStr = jsonMatch[0];
-  }
-  
-  let data: any = {};
   try {
-    let cleanedJsonStr = jsonStr
-       .replace(/,\s*([\}\]])/g, '$1')
-       .replace(/\n/g, ' '); 
-    data = JSON.parse(cleanedJsonStr);
-  } catch (parseError: any) {
-    addLog(`JSON Parse failed for ${originalFilename}: ${parseError.message}. Using aggressive fallback string extraction.`, 'error');
-    const extractField = (key: string) => {
-       const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'i');
-       const match = jsonStr.match(regex);
-       return match ? match[1].trim() : null;
-    };
-    
-    data = {
-      title: extractField("title") || originalFilename.replace(/\.[^/.]+$/, ""),
-      category: extractField("category") || '00_Inbox/Processed',
-      summary: extractField("summary") || 'Automatic fallback due to model parsing error.',
-      tags: [],
-      related_concepts: []
-    };
+    data = await generateStructured({
+      endpointUrl: currentConfig.llamaUrl,
+      messages: [{ role: 'user', content: prompt }],
+      schema: ProcessInboxOutputSchema,
+      schemaName: 'process_inbox_schema',
+      timeoutMs,
+      temperature: 0.1,
+      maxTokens: 350
+    });
+  } catch (llmError: any) {
+    // C8: If LLM returned invalid JSON, empty output, or failed schema validation, quarantine to 00_Inbox/Review with review_reason
+    if (
+      llmError instanceof GenerationError &&
+      !llmError.reviewReason.startsWith('llm_network_error') &&
+      llmError.reviewReason !== 'llm_url_missing'
+    ) {
+      const reviewDir = path.join(currentConfig.vaultPath, '00_Inbox', 'Review');
+      await fsPromises.mkdir(reviewDir, { recursive: true });
+      const reviewTitle = sanitizeTitle(
+        (parsedIncomingNote?.data?.title as string) || originalFilename.replace(/\.[^/.]+$/, ''),
+        originalFilename
+      );
+      const reviewDestPath = path.join(reviewDir, `${reviewTitle}.md`);
+      const reviewData: Record<string, unknown> = {
+        ...(parsedIncomingNote?.data || {}),
+        title: reviewTitle,
+        review_reason: llmError.reviewReason,
+        ai_processed: false
+      };
+      const reviewContent = serializeNote(reviewData, fullConvertedText);
+      await fsPromises.writeFile(reviewDestPath, reviewContent, 'utf-8');
+      if (path.resolve(filePath) !== path.resolve(reviewDestPath)) {
+        await fsPromises.unlink(filePath).catch(() => null);
+      }
+      addLog(
+        `[Review Quarantine] Moved "${originalFilename}" to 00_Inbox/Review (review_reason: ${llmError.reviewReason})`,
+        'warn'
+      );
+      return;
+    }
+    throw llmError;
   }
   
   // Routing
@@ -1433,6 +1599,10 @@ Extract these exactly 5 fields in valid JSON format:
   else if (rawCategory === 'Journal') destFolder = path.join('04_Journal', 'Daily');
   else if (rawCategory === 'Ideas') destFolder = path.join('05_Ideas', 'Inbox');
   
+  if (inboxRouteResult && (inboxRouteResult.isHighConfidence || inboxRouteResult.projectLink)) {
+    destFolder = inboxRouteResult.suggestedFolder;
+  }
+
   // Dynamically register folder
   if (!currentVaultStructure.includes(destFolder)) {
     currentVaultStructure.push(destFolder);
@@ -1469,6 +1639,7 @@ Extract these exactly 5 fields in valid JSON format:
   const tagsWithLanguage = ensureLanguageTags(parsedTags, fullConvertedText, originalFilename);
 
   const noteData: Record<string, unknown> = {
+    ...(parsedIncomingNote?.data || {}),
     title: safeTitle,
     category: category,
     tags: tagsWithLanguage,
@@ -1476,8 +1647,14 @@ Extract these exactly 5 fields in valid JSON format:
     ai_refined: true,
     ai_processed: true,
   };
+  if (inboxRouteResult?.projectLink) {
+    noteData.project = inboxRouteResult.projectLink;
+  }
 
   let destMdPath = path.join(currentConfig.vaultPath, destFolder, mdFilename);
+  if (!isPathInsideVault(destMdPath, currentConfig.vaultPath)) {
+    throw new Error(`Security Error: Destination path "${destMdPath}" is outside vault.`);
+  }
   
   // Deduplication: Check if existing note has identical content to prevent creating "Title 1.md", "Title 2.md"
   if (fs.existsSync(destMdPath)) {
@@ -2530,11 +2707,25 @@ app.post('/api/decision/test', async (req, res) => {
   const { text, question, options, decisionModelUrl } = parseResult.data;
   const targetUrl = decisionModelUrl || currentConfig.decisionModelUrl;
   const targetQuestion = question || 'What is the most appropriate category for this note?';
-  const targetOptions = options && options.length >= 2 ? options : STANDARD_CONTENT_TYPES;
+  const targetOptions = options && options.length >= 2
+    ? options
+    : (currentConfig.topLevelCategories || [
+        'Project',
+        'Essay/Knowledge',
+        'Dialogue/Transcript',
+        'Poem',
+        'Screenplay/Script',
+        'Idea',
+        'Journal/Diary',
+        'Technical/Code'
+      ]);
 
   try {
     const start = Date.now();
-    const output = await decide(targetUrl, text, targetQuestion, targetOptions, 15000);
+    const output = await chooseOne(text, targetQuestion, targetOptions, {
+      decisionModelUrl: targetUrl,
+      timeoutMs: 15000
+    });
     const elapsedMs = Date.now() - start;
     res.json({ success: true, output, elapsedMs });
   } catch (err: any) {
@@ -2653,33 +2844,8 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
   }
 
   await scan(currentConfig.vaultPath);
-  const projects = await loadProjectsRegistry(currentConfig.vaultPath);
   const threshold = req.body?.threshold || currentConfig.decisionConfidenceThreshold || 0.80;
-
-  const routerConfig: HierarchicalRouterConfig = {
-    topLevelCategories: currentConfig.topLevelCategories || [
-      'Project',
-      'Essay/Knowledge',
-      'Dialogue/Transcript',
-      'Poem',
-      'Screenplay/Script',
-      'Idea',
-      'Journal/Diary',
-      'Technical/Code'
-    ],
-    typeRoutes: currentConfig.typeRoutes || {
-      'Essay/Knowledge': '03_Knowledge/Essays',
-      'Dialogue/Transcript': '03_Knowledge/Dialogues',
-      'Poem': '03_Knowledge/Poems',
-      'Screenplay/Script': '03_Knowledge/Scripts',
-      'Idea': '05_Ideas/Inbox',
-      'Journal/Diary': '04_Journal/Daily',
-      'Technical/Code': '03_Knowledge/Technical'
-    },
-    projects,
-    decisionModelUrl: currentConfig.decisionModelUrl,
-    threshold
-  };
+  const routerConfig = await buildRouterConfig(currentConfig, threshold);
 
   let processedCount = 0;
   let routedCount = 0;

@@ -1,15 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 const fsPromises = fs.promises;
-import axios from 'axios';
+import { z } from 'zod';
 import { parseNote, serializeNote, mergeTags } from './frontmatter';
 import { SnapshotSession } from './snapshot';
-import { sanitizePayloadForLlm, safeTruncateHeadTail } from './unicode';
 import { detectDocumentLanguage } from './language';
 import { extractDocumentInfo, isJunkFile, DocumentInfo } from './documentExtractor';
 import { sanitizeTitle } from './sanitize';
 import { matchProjectByHeader, DEFAULT_PROJECTS, ProjectDefinition } from './projectsRegistry';
 import { isPathInsideVault } from './validation';
+import { generateStructured } from './llm/generate';
 
 export type DetectedItemType =
   | 'scenario'
@@ -503,47 +503,45 @@ Return ONLY raw JSON with this exact structure:
   ]
 }`;
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), (options.timeoutSeconds || 25) * 1000);
+      const SynthesisSchema = z.object({
+        dominant_topic: z.string().optional(),
+        summary: z.string().optional(),
+        contradictions_found: z.boolean().optional(),
+        outliers: z.array(
+          z.object({
+            filename: z.string(),
+            reason: z.string().optional(),
+            suggested_folder: z.string().optional()
+          })
+        ).optional()
+      });
 
-      try {
-        const payload = sanitizePayloadForLlm({
-          messages: [{ role: 'user', content: synthesisPrompt }],
-          temperature: 0.1,
-          max_tokens: 500,
-          stream: false
-        });
+      const parsed = await generateStructured({
+        endpointUrl: llamaUrl,
+        messages: [{ role: 'user', content: synthesisPrompt }],
+        schema: SynthesisSchema,
+        schemaName: 'directory_synthesis',
+        timeoutMs: (options.timeoutSeconds || 25) * 1000,
+        temperature: 0.1,
+        maxTokens: 500
+      });
 
-        const resp = await axios.post(`${llamaUrl.replace(/\/+$/, '')}/v1/chat/completions`, payload, {
-          signal: controller.signal
-        });
+      if (parsed.dominant_topic) dominantTopic = parsed.dominant_topic;
+      if (parsed.summary) dirSummary = parsed.summary;
 
-        const raw = resp.data?.choices?.[0]?.message?.content || '';
-        const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-        const match = clean.match(/\{[\s\S]*\}/);
-
-        if (match) {
-          const parsed = JSON.parse(match[0]);
-          if (parsed.dominant_topic) dominantTopic = parsed.dominant_topic;
-          if (parsed.summary) dirSummary = parsed.summary;
-
-          if (Array.isArray(parsed.outliers)) {
-            for (const out of parsed.outliers) {
-              const item = analyzedItems.find(
-                i => i.filename.toLowerCase() === String(out.filename).toLowerCase()
-              );
-              if (item && item.detectedType !== 'junk') {
-                item.isOutlier = true;
-                item.selectedForMove = false;
-                item.coherenceScore = Math.min(item.coherenceScore, 25);
-                if (out.reason) item.contradictionReason = out.reason;
-                if (out.suggested_folder) item.suggestedTargetFolder = out.suggested_folder.replace(/\\/g, '/');
-              }
-            }
+      if (Array.isArray(parsed.outliers)) {
+        for (const out of parsed.outliers) {
+          const item = analyzedItems.find(
+            i => i.filename.toLowerCase() === String(out.filename).toLowerCase()
+          );
+          if (item && item.detectedType !== 'junk') {
+            item.isOutlier = true;
+            item.selectedForMove = false;
+            item.coherenceScore = Math.min(item.coherenceScore, 25);
+            if (out.reason) item.contradictionReason = out.reason;
+            if (out.suggested_folder) item.suggestedTargetFolder = out.suggested_folder.replace(/\\/g, '/');
           }
         }
-      } finally {
-        clearTimeout(timer);
       }
     } catch {
       // Gracefully retain heuristic result

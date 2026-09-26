@@ -125,16 +125,18 @@ export async function generateStructured<T>(options: GenerateOptions<T>): Promis
     );
   }
 
-  // Parse JSON
+  // Parse JSON (strip <think> reasoning blocks if present)
   let parsedJson: any;
+  const cleanRaw = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   try {
-    parsedJson = JSON.parse(rawContent.trim());
+    parsedJson = JSON.parse(cleanRaw);
   } catch (jsonErr) {
     // Try to extract JSON object if surrounded by markdown or commentary
-    const match = rawContent.match(/\{[\s\S]*\}/);
+    const match = cleanRaw.match(/\{[\s\S]*\}/);
     if (match) {
       try {
-        parsedJson = JSON.parse(match[0]);
+        const cleanedMatch = match[0].replace(/,\s*([\}\]])/g, '$1');
+        parsedJson = JSON.parse(cleanedMatch);
       } catch {
         throw new GenerationError(
           'Failed to parse JSON from LLM output',

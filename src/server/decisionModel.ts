@@ -17,20 +17,6 @@ export interface DecisionOutput {
   optionsCount: number;
 }
 
-export interface ContentTypeDecision {
-  type: string;
-  confidence: number;
-  distribution: DecisionResult[];
-}
-
-export interface FolderRouteDecision {
-  suggestedFolder: string;
-  confidence: number;
-  distribution: DecisionResult[];
-  isHighConfidence: boolean;
-  needsReview: boolean;
-}
-
 // Circuit-breaker cache to avoid freezing pipeline if Jev/LM-Studio is offline
 interface HealthCacheEntry {
   online: boolean;
@@ -275,58 +261,3 @@ export async function decide(
   }
 }
 
-/**
- * Classifies document content type using Jev-style decision function.
- */
-export async function classifyContentType(
-  endpointUrl: string,
-  noteText: string,
-  filename: string,
-  categories: string[] = STANDARD_CONTENT_TYPES,
-  timeoutMs = 15000
-): Promise<ContentTypeDecision> {
-  const snippet = safeSlice(noteText, 0, 1200);
-  const state = `Filename: ${filename}\nContent:\n${snippet}`;
-  const question = 'What is the primary category/type of this document?';
-
-  const output = await decide(endpointUrl, state, question, categories, timeoutMs);
-  return {
-    type: output.chosen.option,
-    confidence: output.confidence,
-    distribution: output.decisions
-  };
-}
-
-/**
- * Evaluates note text against candidate folders and returns calibrated probabilities.
- */
-export async function routeFolderWithDecisionModel(
-  endpointUrl: string,
-  noteText: string,
-  filename: string,
-  candidateFolders: string[],
-  confidenceThreshold = 0.80,
-  timeoutMs = 15000
-): Promise<FolderRouteDecision> {
-  if (candidateFolders.length === 0) {
-    throw new Error('No candidate folders provided for routing');
-  }
-
-  // Cap to 20 folders to fit in single top_logprobs pass
-  const folders = candidateFolders.slice(0, 20);
-  const snippet = safeSlice(noteText, 0, 1500);
-  const state = `Filename: ${filename}\nContent Snippet:\n${snippet}`;
-  const question = 'Which folder should this note be placed in?';
-
-  const output = await decide(endpointUrl, state, question, folders, timeoutMs);
-  const isHighConfidence = output.confidence >= confidenceThreshold;
-  const needsReview = !isHighConfidence;
-
-  return {
-    suggestedFolder: output.chosen.option,
-    confidence: output.confidence,
-    distribution: output.decisions,
-    isHighConfidence,
-    needsReview
-  };
-}
