@@ -340,6 +340,7 @@ class LlamaManager {
       '--port', String(port),
       '--host', '127.0.0.1',
       '-c', String(ctx),
+      '-np', '1',
       '-t', String(threads),
       '-ngl', '99',
       '--alias', 'jev-decision'
@@ -446,7 +447,7 @@ class LlamaManager {
 
     this.stopServer('primary');
 
-    const ctx = options.contextSize || 2048;
+    const ctx = options.contextSize || 4096;
     const threads = options.threads || 4;
 
     const args = [
@@ -454,6 +455,7 @@ class LlamaManager {
       '--port', String(port),
       '--host', '127.0.0.1',
       '-c', String(ctx),
+      '-np', '1',
       '-t', String(threads),
       '-ngl', '99',
       '--alias', 'primary-llm'
@@ -660,6 +662,7 @@ start "JEV DECISION SERVER (Port 1234)" cmd /k ^
   --port 1234 ^
   --host 127.0.0.1 ^
   -c 2048 ^
+  -np 1 ^
   -t 4 ^
   -ngl 99 ^
   --alias jev-decision
@@ -670,7 +673,7 @@ echo.
 echo ====================================================================
 echo  [2/2] Launching Primary Generative Server on http://127.0.0.1:8080 ...
 echo  Model: Hermes-3-Llama-3.2-3B.Q4_K_M.gguf (~2.2 GB RAM)
-echo  Parameters: -c 2048 -t 4 --port 8080
+echo  Parameters: -c 4096 -np 1 -t 4 --port 8080
 echo  Combined RAM: ~3.6 GB (Safe for 16GB RAM, No Disk Thrashing!)
 echo ====================================================================
 
@@ -679,7 +682,8 @@ start "PRIMARY LLM SERVER (Port 8080)" cmd /k ^
   -m "${modelsDir}/${KNOWN_MODELS.HERMES_3B}" ^
   --port 8080 ^
   --host 127.0.0.1 ^
-  -c 2048 ^
+  -c 4096 ^
+  -np 1 ^
   -t 4 ^
   -ngl 99 ^
   --alias primary-llm
@@ -720,7 +724,8 @@ echo ====================================================================
   -m "${modelsDir}/${KNOWN_MODELS.QWEN_7B}" ^
   --port 8080 ^
   --host 127.0.0.1 ^
-  -c 2048 ^
+  -c 4096 ^
+  -np 1 ^
   -t 4 ^
   -ngl 99 ^
   --alias primary-llm

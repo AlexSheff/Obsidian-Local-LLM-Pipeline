@@ -57,7 +57,8 @@ export async function generateStructured<T>(options: GenerateOptions<T>): Promis
     messages,
     temperature,
     max_tokens: maxTokens,
-    stream: false
+    stream: false,
+    cache_prompt: true
   };
 
   if (jsonSchema) {
@@ -75,6 +76,28 @@ export async function generateStructured<T>(options: GenerateOptions<T>): Promis
 
   let rawContent = '';
 
+  const extractAxiosErrorDetail = (err: any): string => {
+    const serverMsg =
+      err?.response?.data?.error?.message ||
+      err?.response?.data?.message ||
+      (typeof err?.response?.data === 'string' ? err.response.data.slice(0, 200) : '');
+    return serverMsg ? `${err.message} (${serverMsg})` : err.message;
+  };
+
+  const compactMessagesForRetry = (
+    msgs: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  ) => {
+    return msgs.map(m => {
+      if (m.content.length <= 1600) return m;
+      const head = m.content.slice(0, 900);
+      const tail = m.content.slice(-500);
+      return {
+        ...m,
+        content: `${head}\n...[TRUNCATED FOR CONTEXT LIMIT]...\n${tail}`
+      };
+    });
+  };
+
   try {
     const payload = sanitizePayloadForLlm(primaryPayload);
     const response = await axios.post(`${cleanUrl}/v1/chat/completions`, payload, {
@@ -83,15 +106,18 @@ export async function generateStructured<T>(options: GenerateOptions<T>): Promis
     });
     rawContent = response.data?.choices?.[0]?.message?.content || '';
   } catch (primaryErr: any) {
-    // If strict json_schema rejected with 400, retry once with json_object
     const is400 = primaryErr.response?.status === 400;
-    if (is400 && primaryPayload.response_format?.type === 'json_schema') {
+    if (is400) {
+      // Retry on HTTP 400 (either strict json_schema unsupported OR prompt + max_tokens exceeded llama-server -c context slot)
       try {
+        const compactedMessages = compactMessagesForRetry(messages);
+        const reducedMaxTokens = Math.min(maxTokens, 200);
         const fallbackPayload = sanitizePayloadForLlm({
-          messages,
+          messages: compactedMessages,
           temperature,
-          max_tokens: maxTokens,
+          max_tokens: reducedMaxTokens,
           stream: false,
+          cache_prompt: true,
           response_format: { type: 'json_object' }
         });
         const fbRes = await axios.post(`${cleanUrl}/v1/chat/completions`, fallbackPayload, {
@@ -101,16 +127,18 @@ export async function generateStructured<T>(options: GenerateOptions<T>): Promis
         rawContent = fbRes.data?.choices?.[0]?.message?.content || '';
       } catch (fbErr: any) {
         clearTimeout(timer);
+        const detail = extractAxiosErrorDetail(fbErr);
         throw new GenerationError(
-          `Generative LLM call failed: ${fbErr.message}`,
-          `llm_network_error: ${fbErr.message}`
+          `Generative LLM call failed: ${detail}`,
+          `llm_network_error: ${detail}`
         );
       }
     } else {
       clearTimeout(timer);
+      const detail = extractAxiosErrorDetail(primaryErr);
       throw new GenerationError(
-        `Generative LLM call failed: ${primaryErr.message}`,
-        `llm_network_error: ${primaryErr.message}`
+        `Generative LLM call failed: ${detail}`,
+        `llm_network_error: ${detail}`
       );
     }
   } finally {

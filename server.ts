@@ -829,10 +829,15 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
     return;
   }
   
-  // Extract all existing tags (from frontmatter and inline)
+  // Extract all existing tags (from frontmatter and inline), capped at 15 for prompt to prevent HTTP 400 context overflow on tag-taxonomy files
   const existingFrontmatterStr = parsedNote.hadFrontmatter ? serializeNote(parsedNote.data, '') : '';
   const existingTags = extractTags(existingFrontmatterStr, body, originalFilename);
-  const existingTagsStr = existingTags.length > 0 ? existingTags.map(t => `#${t}`).join(', ') : 'None';
+  const promptTags = existingTags.slice(0, 15);
+  const existingTagsStr =
+    promptTags.length > 0
+      ? promptTags.map(t => `#${t}`).join(', ') +
+        (existingTags.length > 15 ? ` (+${existingTags.length - 15} more)` : '')
+      : 'None';
   
   const currentRelPath = path.relative(currentConfig.vaultPath, path.dirname(filePath)).replace(/\\/g, '/');
 
@@ -937,34 +942,30 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
           return;
         }
 
-        decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (CALIBRATED GROUND TRUTH):\n- Detected Category: ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}% confidence)\n- Suggested Folder: ${routeResult.suggestedFolder} (${Math.round(routeResult.totalConfidence * 100)}% confidence)\n- Selection Detail: ${routeResult.level2Selection} (${Math.round(routeResult.level2Confidence * 100)}% confidence)${routeResult.projectLink ? `\n- Project Link: ${routeResult.projectLink} (Non-core project note: keep in genre folder '${routeResult.suggestedFolder}')` : ''}\nPrioritize placing this note into '${routeResult.suggestedFolder}'.`;
+        if (routeResult.isHighConfidence) {
+          decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (CALIBRATED GROUND TRUTH):\n- Detected Category: ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}% confidence)\n- Suggested Folder: ${routeResult.suggestedFolder} (${Math.round(routeResult.totalConfidence * 100)}% confidence)\n- Selection Detail: ${routeResult.level2Selection} (${Math.round(routeResult.level2Confidence * 100)}% confidence)${routeResult.projectLink ? `\n- Project Link: ${routeResult.projectLink} (Non-core project note: keep in genre folder '${routeResult.suggestedFolder}')` : ''}\nPrioritize placing this note into '${routeResult.suggestedFolder}'.`;
+        } else {
+          decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (LOW-CONFIDENCE HINT — ${Math.round(routeResult.totalConfidence * 100)}%):\n- Candidate Category: ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}% confidence)\n- Candidate Folder: ${routeResult.suggestedFolder} (${Math.round(routeResult.totalConfidence * 100)}% confidence)\nConfidence is below the ${Math.round(routerConfig.threshold * 100)}% threshold; verify carefully against the note content and choose the most accurate PARA folder.`;
+        }
       } catch (decisionErr: any) {
         addLog(`Decision model check skipped: ${decisionErr.message}`, 'warn');
       }
     }
   }
 
-  // Degraded fallback mode without decision model: only pass truncated folder list if decisionGuidance is unavailable
+  // Degraded fallback mode without high-confidence decision model: pass truncated folder list when high-confidence guidance is unavailable
   let existingFoldersContext = '';
-  if (!decisionGuidance && currentVaultStructure.length > 0) {
-    const sampleFolders = currentVaultStructure.slice(0, 30);
+  if ((!decisionGuidance || (hierarchicalRouteResult && !hierarchicalRouteResult.isHighConfidence)) && currentVaultStructure.length > 0) {
+    const sampleFolders = currentVaultStructure.slice(0, 25);
     existingFoldersContext = "\nEXISTING FOLDERS IN VAULT (Degraded fallback mode without Decision Model):\n- " + sampleFolders.join("\n- ");
-    if (currentVaultStructure.length > 30) {
-      existingFoldersContext += `\n- ... (${currentVaultStructure.length - 30} other folders)`;
+    if (currentVaultStructure.length > 25) {
+      existingFoldersContext += `\n- ... (${currentVaultStructure.length - 25} other folders)`;
     }
   }
 
+  // Static instructions placed first so llama-server reuses the KV-cache prefix across consecutive notes
   const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using PARA (Projects, Areas, Resources/Knowledge, Archives).
 Carefully analyze the NOTE INFORMATION, EXISTING TAGS, and CONTENT to classify it with flawless precision.
-${decisionGuidance}
-
-
-### NOTE INFORMATION:
-- Filename: ${originalFilename}
-- Current Folder: ${currentRelPath || 'Root'}
-- Existing Tags: ${existingTagsStr}
-- Content Snippet:
-${textToProcess}
 
 ### TITLE GUIDELINES & LANGUAGE RULES (STRICT):
 - Distill a concise, clean, and elegant human title (2 to 5 words).
@@ -1009,6 +1010,14 @@ ${existingFoldersContext}
 - KEEP all valuable existing tags.
 - Generate 5 to 10 HIGHLY SPECIFIC topic tags based on the core semantic meaning (lowercase, without '#' in array).
 - Support English and Russian tags matching the language of the note.
+${decisionGuidance}
+
+### NOTE INFORMATION:
+- Filename: ${originalFilename}
+- Current Folder: ${currentRelPath || 'Root'}
+- Existing Tags: ${existingTagsStr}
+- Content Snippet:
+${textToProcess}
 
 Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
 {
@@ -1027,19 +1036,24 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
       schemaName: 'refine_note_schema',
       timeoutMs,
       temperature: 0.1,
-      maxTokens: 350
+      maxTokens: 280
     });
   } catch (llmError: any) {
-    const isTimeout =
+    const isRecoverableWithCompactFallback =
       llmError.message?.includes('canceled') ||
       llmError.message?.includes('aborted') ||
-      llmError.message?.includes('timeout');
-    if (isTimeout) {
-      addLog(`Primary prompt timed out after ${currentConfig.timeoutSeconds || 240}s on ${originalFilename}. Attempting quick compact fallback...`, 'warn');
+      llmError.message?.includes('timeout') ||
+      llmError.message?.includes('status code 400') ||
+      llmError.message?.includes('context');
+    if (isRecoverableWithCompactFallback) {
+      addLog(
+        `Primary prompt failed (${llmError.message}) on ${originalFilename}. Attempting quick compact fallback...`,
+        'warn'
+      );
       try {
         data = await fastFallbackRefine(originalFilename, body);
       } catch (fbErr: any) {
-        throw new Error(`LLM Refine Request timed out (${currentConfig.timeoutSeconds || 240}s) and fallback failed: ${fbErr.message}`);
+        throw new Error(`LLM Refine Request failed and compact fallback failed: ${fbErr.message}`);
       }
     } else {
       throw llmError;
@@ -1053,7 +1067,7 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   const tagsWithLanguage = ensureLanguageTags(parsedNewTags, body, originalFilename);
   mergeTags(parsedNote.data, tagsWithLanguage);
   parsedNote.data.ai_refined = true;
-  if (hierarchicalRouteResult?.projectLink) {
+  if (hierarchicalRouteResult?.projectLink && (hierarchicalRouteResult.isHighConfidence || hierarchicalRouteResult.level1Confidence >= 0.75)) {
     parsedNote.data.project = hierarchicalRouteResult.projectLink;
   }
 
@@ -1074,7 +1088,11 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   const finalFileContent = serializeNote(parsedNote.data, parsedNote.body);
 
   let suggestedPath = (data.suggested_path || '03_Knowledge/Unsorted').trim();
-  if (hierarchicalRouteResult && (hierarchicalRouteResult.isHighConfidence || hierarchicalRouteResult.projectLink)) {
+  if (
+    hierarchicalRouteResult &&
+    (hierarchicalRouteResult.isHighConfidence ||
+      (hierarchicalRouteResult.projectLink && hierarchicalRouteResult.level1Confidence >= 0.75))
+  ) {
     suggestedPath = hierarchicalRouteResult.suggestedFolder;
   }
   
@@ -1359,9 +1377,14 @@ export async function processFile(filePath: string) {
     }
   }
   
-  // Extract any inline tags from content
+  // Extract any inline tags from content (cap at 15 in prompt to prevent context window overflow)
   const detectedTags = extractTags('', fullConvertedText, originalFilename);
-  const detectedTagsStr = detectedTags.length > 0 ? detectedTags.map(t => `#${t}`).join(', ') : 'None';
+  const detectedPromptTags = detectedTags.slice(0, 15);
+  const detectedTagsStr =
+    detectedPromptTags.length > 0
+      ? detectedPromptTags.map(t => `#${t}`).join(', ') +
+        (detectedTags.length > 15 ? ` (+${detectedTags.length - 15} more)` : '')
+      : 'None';
 
   // Jev-Style Decision Model integration for incoming Inbox files (D-LIVE)
   let decisionGuidance = '';
@@ -1599,7 +1622,11 @@ Extract these exactly 5 fields in valid JSON format:
   else if (rawCategory === 'Journal') destFolder = path.join('04_Journal', 'Daily');
   else if (rawCategory === 'Ideas') destFolder = path.join('05_Ideas', 'Inbox');
   
-  if (inboxRouteResult && (inboxRouteResult.isHighConfidence || inboxRouteResult.projectLink)) {
+  if (
+    inboxRouteResult &&
+    (inboxRouteResult.isHighConfidence ||
+      (inboxRouteResult.projectLink && inboxRouteResult.level1Confidence >= 0.75))
+  ) {
     destFolder = inboxRouteResult.suggestedFolder;
   }
 
@@ -2829,21 +2856,16 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
     return res.status(400).json({ error: 'Decision model URL not configured' });
   }
 
-  const allMdFiles: string[] = [];
-  async function scan(dir: string) {
-    const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-    for (const ent of entries) {
-      if (ent.name.startsWith('.') || ent.name.startsWith('99_System')) continue;
-      const full = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        await scan(full);
-      } else if (ent.isFile() && ent.name.endsWith('.md')) {
-        allMdFiles.push(full);
-      }
-    }
+  const isJevOnline = await isDecisionServerReachable(currentConfig.decisionModelUrl, 2000);
+  if (!isJevOnline) {
+    addLog(`[Jev Triage Aborted] Decision server is not reachable at ${currentConfig.decisionModelUrl}.`, 'error');
+    return res.status(503).json({
+      error: `Jev Decision Server is offline at ${currentConfig.decisionModelUrl}. Start it before running batch triage.`
+    });
   }
 
-  await scan(currentConfig.vaultPath);
+  const forceAll = !!req.body?.force;
+  const candidateFiles = await getFilesRecursively(currentConfig.vaultPath, [], forceAll, false);
   const threshold = req.body?.threshold || currentConfig.decisionConfidenceThreshold || 0.80;
   const routerConfig = await buildRouterConfig(currentConfig, threshold);
 
@@ -2851,13 +2873,30 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
   let routedCount = 0;
   let triagedCount = 0;
 
-  addLog(`Starting Hierarchical Jev Triage on ${allMdFiles.length} notes (Threshold: ${Math.round(threshold * 100)}%)...`, 'info');
+  addLog(
+    `Starting Hierarchical Jev Triage on ${candidateFiles.length} unrefined notes (Threshold: ${Math.round(threshold * 100)}%)...`,
+    'info'
+  );
 
-  for (const filePath of allMdFiles) {
+  const shouldMove = !!(currentConfig.autoMoveEnabled || req.body?.forceMove);
+  const batchSnapshot = shouldMove
+    ? createSnapshotSession(currentConfig.vaultPath, 'hierarchical_batch_route')
+    : null;
+
+  for (let idx = 0; idx < candidateFiles.length; idx++) {
+    if (isShuttingDown) {
+      addLog('[Jev Triage] Interrupted due to server shutdown.', 'warn');
+      break;
+    }
+
+    const filePath = candidateFiles[idx];
     try {
       const content = await fsPromises.readFile(filePath, 'utf-8');
       const parsed = parseNote(content);
-      if (parsed.data.ai_refined) continue;
+      if (!forceAll && parsed.data.ai_refined) continue;
+
+      const ghost = checkGhostNote(parsed.body);
+      if (ghost.isGhost || parsed.body.trim().length === 0) continue;
 
       processedCount++;
       const filename = path.basename(filePath);
@@ -2869,13 +2908,12 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
         filename,
         title,
         routerConfig,
-        { timeoutMs: 15000 }
+        { timeoutMs: 12000 }
       );
 
       if (routeResult.isHighConfidence) {
-        if (currentConfig.autoMoveEnabled || req.body?.forceMove) {
-          const snapshot = await createSnapshotSession(currentConfig.vaultPath, 'hierarchical_batch_route');
-          await snapshot.backup(filePath);
+        if (shouldMove && batchSnapshot) {
+          await batchSnapshot.backup(filePath);
 
           parsed.data.ai_refined = true;
           (parsed.data as any).ai_category = routeResult.level1Category;
@@ -2887,7 +2925,7 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
           await fsPromises.mkdir(destDir, { recursive: true });
           const destPath = path.join(destDir, filename);
           await fsPromises.writeFile(filePath, serialized, 'utf-8');
-          if (filePath !== destPath) {
+          if (path.resolve(filePath) !== path.resolve(destPath)) {
             await fsPromises.rename(filePath, destPath);
           }
         }
@@ -2906,6 +2944,15 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
             { letter: 'B', option: routeResult.level2Selection, probability: routeResult.level2Confidence }
           ]
         }, routerConfig.typeRoutes);
+      }
+
+      if (processedCount % 20 === 0) {
+        addLog(
+          `[Jev Triage Progress] ${processedCount}/${candidateFiles.length} notes evaluated (${routedCount} high-conf, ${triagedCount} queued for review)...`,
+          'info'
+        );
+        // Yield to event loop so HTTP status/logs requests remain responsive
+        await new Promise(r => setImmediate(r));
       }
     } catch (err: any) {
       addLog(`Hierarchical triage failed on ${path.basename(filePath)}: ${err.message}`, 'warn');
@@ -3747,17 +3794,23 @@ async function startServer() {
       try {
         const probe = await llamaManager.probeServer(currentConfig.decisionModelUrl || 'http://127.0.0.1:1234', 1000);
         if (!probe.online) {
-          const binary = llamaManager.findLlamaServerBinary(currentConfig.llamaServerBinary, currentConfig.modelsPath);
-          if (binary && fs.existsSync(currentConfig.modelsPath)) {
+          const resolvedModelsDir = llamaManager.resolveModelsDirectory(currentConfig.modelsPath, currentConfig.vaultPath);
+          const binary = llamaManager.findLlamaServerBinary(currentConfig.llamaServerBinary, resolvedModelsDir);
+          if (binary && fs.existsSync(resolvedModelsDir)) {
             addLog('[Auto-Start] Launching Jev Decision Server on port 1234 (16GB RAM safe mode)...', 'info');
-            await llamaManager.startJevServer({
+            const state = await llamaManager.startJevServer({
               binaryPath: binary,
-              modelsDir: currentConfig.modelsPath,
+              modelsDir: resolvedModelsDir,
               modelFilename: currentConfig.jevModelFile,
               port: 1234,
               contextSize: currentConfig.contextSize || 2048,
               threads: currentConfig.threadCount || 4
             });
+            if (state.status === 'running') {
+              addLog(`[Auto-Start] Jev Decision Server is online on port 1234 (${state.modelFilename}).`, 'success');
+            } else if (state.lastError) {
+              addLog(`[Auto-Start] Jev Decision Server could not start: ${state.lastError}`, 'warn');
+            }
           }
         }
       } catch {}

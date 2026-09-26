@@ -96,17 +96,29 @@ export async function routeHierarchical(
       ) || candidateProjects[l2Result.chosen.letter.charCodeAt(0) - 65] || candidateProjects[0];
 
       // Check if note is one of project core doc types (C4.3)
-      const lowerSnippet = (title + ' ' + snippet).toLowerCase();
+      const lowerSnippet = (filename + ' ' + title + ' ' + snippet).toLowerCase();
+      const hasAliasInText = (matchedProj.aliases || []).some(a =>
+        lowerSnippet.includes(a.toLowerCase())
+      );
+      const isConfidentProjectMatch = level2Confidence >= 0.60 || hasAliasInText;
+
       isCoreDocType = (matchedProj.coreDocTypes || []).some(coreType =>
         lowerSnippet.includes(coreType.toLowerCase()) ||
         lowerSnippet.includes('спецификация') ||
         lowerSnippet.includes('роадмап') ||
         lowerSnippet.includes('roadmap') ||
-        lowerSnippet.includes('архитектура')
+        lowerSnippet.includes('архитектура') ||
+        lowerSnippet.includes('architecture') ||
+        lowerSnippet.includes('launch plan') ||
+        lowerSnippet.includes('launch_plan') ||
+        lowerSnippet.includes('pilot') ||
+        lowerSnippet.includes('пилот') ||
+        lowerSnippet.includes('план запуска') ||
+        lowerSnippet.includes('техническое задание')
       );
 
       if (isCoreDocType) {
-        suggestedFolder = matchedProj.folder;
+        suggestedFolder = isConfidentProjectMatch ? matchedProj.folder : '01_Projects/Active';
       } else {
         // Non-core notes about the project remain in their genre folder and get project: [[id]] link!
         const nonProjectCategories = topCategories.filter(c => c !== 'Project');
@@ -115,7 +127,9 @@ export async function routeHierarchical(
           timeoutMs
         });
         suggestedFolder = config.typeRoutes[genreResult.chosen.option] || '03_Knowledge/Essays';
-        projectLink = `[[${matchedProj.id}]]`;
+        if (isConfidentProjectMatch) {
+          projectLink = `[[${matchedProj.id}]]`;
+        }
       }
     } else {
       suggestedFolder = '01_Projects';
