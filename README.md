@@ -42,6 +42,30 @@ v4.0 introduces the **Dynamic Semantic Hypergraph (DSH)** layer powered by the l
 
 ---
 
+## What's New in v4.1: Live Hierarchical Router, Calibration Gate & Security Hardening
+
+1. **Two-Tier Hierarchical Routing in Live Pipeline (`D-LIVE`, `C2` & `C4`)**:
+   - Connected directly into live `00_Inbox` processing (`processFile`), vault refinement (`refineFile`), and batch triage (`routeHierarchical`).
+   - **Tier 1 (Genre / Category)**: Classifies notes across top-level taxonomy categories (`Project`, `Essay/Knowledge`, `Dialogue/Transcript`, `Poem`, `Screenplay/Script`, `Idea`, `Journal/Diary`, `Technical/Code`) so folders like `03_Knowledge/Poems` are never cut off by large project lists.
+   - **Tier 2 (`projects.yaml` Registry & Project-as-Link)**: Matches projects via `99_System/projects.yaml`. Core project documents (`coreDocTypes`: specs, roadmaps, architecture) route physically to `01_Projects/<id>`, whereas non-core project notes remain in their genre folder (e.g., `03_Knowledge/Essays`) and receive `project: "[[<id>]]"` in YAML frontmatter.
+   - **Ambiguity Triage Queue (`C7`)**: Low-confidence predictions (`totalConfidence < threshold`) are automatically enqueued into `TriageManager` for interactive Yes/No confirmation logged to `99_System/index/feedback.jsonl`.
+
+2. **Unified Structured LLM Generation & Review Quarantine (`C1` & `C8`)**:
+   - All generative JSON calls (`processFile`, `refineFile`, `fastFallbackRefine`, `directoryRevisor`) execute through `generateStructured` using `response_format: json_schema` (with automatic `json_object` fallback) and strict Zod schema validation.
+   - Eliminates silent regex fallbacks and `processing_error` tags: if an incoming Inbox note fails JSON parsing or schema validation (`GenerationError`), it is safely quarantined to `00_Inbox/Review/` with `review_reason` recorded in YAML frontmatter.
+
+3. **Empirical Calibration Gate & Security Invariants (`R1`–`R8`, `C6`)**:
+   - **Calibration Gate (`isCalibrated`)**: `decisionMode: "fast_routing"` requires a verified `99_System/index/thresholds.json` (`calibrated: true`, computed via `npm run calibrate` or `POST /api/calibrate`). Uncalibrated configs automatically fall back to `"hybrid"` on startup and return HTTP `400` on `POST /api/config`.
+   - **Loopback & Dev-Mode Safety**: Server binds to `127.0.0.1` by default (`resolveHost`) and only mounts Vite dev middleware on explicit `NODE_ENV=development` (`resolveIsDevMode`).
+   - **Vault Boundary Enforcement (`isPathInsideVault`)**: Every move, conversion, and `delete_junk` action in `applyRevisionPlan`, `refineFile`, and `processFile` validates both source and destination paths against path traversal.
+   - **Explicit User Opt-In (`selectedForMove: false`)**: Directory Revisor audits never pre-select items for move or deletion by default.
+   - **Hidden-Vault Watcher Compatibility (`isInboxPathIgnored`)**: Evaluates dot-segments strictly relative to `00_Inbox` so vaults stored inside hidden parent directories (e.g., `~/.vaults/...`) work out of the box.
+
+4. **Crash-Resilient 1-Click Master Vault Reorganization**:
+   - Uses lightweight head extraction (`lightweight: true`) during full-vault audits to avoid memory spikes on large PDFs/DOCX files, drains `llama-server` `stdout`/`stderr` pipes continuously to prevent 64 KB buffer deadlocks, and creates unique timestamped undo snapshots.
+
+---
+
 ## What's New in v3.5
 
 1. **Language-Aware Naming & Tagging Enforcement**:
@@ -62,10 +86,11 @@ v4.0 introduces the **Dynamic Semantic Hypergraph (DSH)** layer powered by the l
 
 ---
 
-## Hypergraph CLI Commands
+## CLI Commands (Calibration, Projects & Hypergraph)
 
 | Command | Description |
 | :--- | :--- |
+| `npm run calibrate` | Evaluates empirical routing accuracy on organic vault notes and writes `99_System/index/thresholds.json`. |
 | `npm run hypergraph:spike` | Benchmark Noul, Score, and Choice primitives on local hardware and record `spike_report.md`. |
 | `npm run hypergraph:bootstrap -- --vault <path>` | Full initial vault pass: token extraction, DNA logic, and initial hypergraph generation. |
 | `npm run hypergraph:report -- --vault <path>` | Compiles graph dimensions, primitive latency tables, and top hyperedges into `_Report.md`. |
@@ -79,14 +104,17 @@ v4.0 introduces the **Dynamic Semantic Hypergraph (DSH)** layer powered by the l
 ```text
 D:\Obsidian\User_Vault\
 ├── 00_Inbox/                  <- Drop incoming files here for automated routing
+│   ├── Processed/             <- Fallback processed notes
+│   └── Review/                <- Quarantined notes with review_reason in frontmatter
 ├── 00_MOC/                    <- Maps of Content
-├── 01_Projects/               <- Active projects
+├── 01_Projects/               <- Active projects (core specs, roadmaps, architecture)
 ├── 02_Areas/                  <- Long-term domains
-├── 03_Knowledge/              <- Essays, Dialogues, Code, Poems
-├── 04_Journal/                <- Daily logs
+├── 03_Knowledge/              <- Essays, Dialogues, Code, Poems, Scripts
+├── 04_Journal/                <- Daily logs & digests
 ├── 05_Ideas/                  <- Raw brainstorming
 ├── 06_Archive/                <- Completed or obsolete notes
 └── 99_System/
+    ├── projects.yaml          <- Canonical project registry (id, folder, aliases, coreDocTypes)
     ├── hypergraph/
     │   ├── tokens.jsonl       <- Canonical token registry
     │   ├── edges.jsonl        <- 3-uniform hyperedges with weights
@@ -97,6 +125,7 @@ D:\Obsidian\User_Vault\
     │   ├── config.json        <- Hypergraph thresholds and caps
     │   └── _Report.md         <- Comprehensive topology and latency report
     ├── index/
+    │   ├── thresholds.json    <- Empirical calibration gate (tau, accuracy, coverage)
     │   └── feedback.jsonl     <- User confirmation and triage logs
     └── snapshots/             <- Safe backups for 1-click rollback
 ```
@@ -139,25 +168,26 @@ start "Primary Hermes Server" llama-server.exe -m "Hermes-3-Llama-3.2-3B.Q4_K_M.
    npm install
    ```
 
-3. **Start the application**:
+3. **Start the application (Development)**:
    ```bash
    npm run dev
    ```
-   Open `http://localhost:3000` in your web browser.
+   Open `http://127.0.0.1:3000` in your web browser.
 
 4. **Run tests**:
    ```bash
    npm test
    ```
-   Runs the full Vitest suite (84 tests passing across 11 test suites covering hypergraph primitives, DNA logic, Oracle predictions, tokens registry, language detection, frontmatter, directory revisor, and safety snapshots).
+   Runs the full Vitest suite (**96 tests passing across 12 test suites** covering security regressions R1–R8, live two-tier hierarchical routing `D-LIVE`, structured LLM generation & review quarantine, empirical calibration gate, hypergraph primitives, DNA logic, Oracle predictions, tokens registry, language detection, frontmatter, directory revisor, and safety snapshots).
 
 ---
 
 ## Development & Verification
 
 - `npm run lint` &mdash; TypeScript typecheck (`tsc --noEmit`).
-- `npm test` &mdash; Execute full Vitest suite (84 tests).
-- `npm run build` &mdash; Bundle frontend with Vite and compile Node.js server with esbuild.
+- `npm test` &mdash; Execute full Vitest suite (12 test suites, 96 tests).
+- `npm run build` &mdash; Bundle frontend with Vite and compile Node.js server (`dist/server.cjs`) with esbuild.
+- `npm start` &mdash; Run compiled production server on `http://127.0.0.1:3000`.
 
 ---
 
