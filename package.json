@@ -1,0 +1,60 @@
+{
+  "name": "obsidian-local-llm-pipeline",
+  "version": "3.0.0",
+  "description": "An automated, Zero-Config, local intelligence pipeline for Obsidian using local LLMs.",
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "calibrate": "tsx scripts/calibrate.ts",
+    "hypergraph:spike": "tsx scripts/hypergraph-spike.ts",
+    "hypergraph:bootstrap": "tsx scripts/hypergraph-bootstrap.ts",
+    "hypergraph:report": "tsx scripts/hypergraph-report.ts",
+    "hypergraph:migrate": "tsx scripts/hypergraph-migrate.ts",
+    "hypergraph:gc": "tsx scripts/hypergraph-gc.ts"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "axios": "^1.20.0",
+    "chokidar": "^5.0.0",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "html-to-text": "^10.0.1",
+    "lucide-react": "^0.546.0",
+    "mammoth": "^1.12.3",
+    "motion": "^12.23.24",
+    "pdf-parse": "^1.1.1",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "recharts": "^3.10.1",
+    "turndown": "^7.2.4",
+    "vite": "^6.2.3",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/html-to-text": "^9.0.4",
+    "@types/node": "^22.14.0",
+    "@types/turndown": "^5.0.6",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vitest": "^5.0.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.63.3"
+  }
+}

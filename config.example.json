@@ -1,0 +1,29 @@
+{
+  "vaultPath": "C:\\Users\\YourUsername\\Documents\\Obsidian_Vault",
+  "llamaUrl": "http://127.0.0.1:8080",
+  "decisionModelUrl": "http://127.0.0.1:1234",
+  "enableDecisionModel": true,
+  "autoMoveEnabled": false,
+  "decisionConfidenceThreshold": 0.80,
+  "decisionMode": "hybrid",
+  "topLevelCategories": [
+    "Project",
+    "Essay/Knowledge",
+    "Dialogue/Transcript",
+    "Poem",
+    "Screenplay/Script",
+    "Idea",
+    "Journal/Diary",
+    "Technical/Code"
+  ],
+  "typeRoutes": {
+    "Essay/Knowledge": "03_Knowledge/Essays",
+    "Dialogue/Transcript": "03_Knowledge/Dialogues",
+    "Poem": "03_Knowledge/Poems",
+    "Screenplay/Script": "03_Knowledge/Scripts",
+    "Idea": "05_Ideas/Inbox",
+    "Journal/Diary": "04_Journal/Daily",
+    "Technical/Code": "03_Knowledge/Technical"
+  }
+}
+
