@@ -144,10 +144,10 @@ export const DirectoryRevisor: React.FC<DirectoryRevisorProps> = ({ onNotify }) 
       const auditData: DirectoryAuditReport = res.data;
       setReport(auditData);
 
-      // Auto-select outliers, junk, and raw docs by default for rapid triage
+      // Do not auto-select items by default (R6): user explicitly selects via checkboxes
       const initialItems = (auditData.items || []).map(item => ({
         ...item,
-        selectedForMove: item.isOutlier || item.isJunk || item.isRawDoc
+        selectedForMove: false
       }));
 
       setItems(initialItems);

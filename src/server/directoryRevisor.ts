@@ -9,6 +9,7 @@ import { detectDocumentLanguage } from './language';
 import { extractDocumentInfo, isJunkFile, DocumentInfo } from './documentExtractor';
 import { sanitizeTitle } from './sanitize';
 import { matchProjectByHeader, DEFAULT_PROJECTS, ProjectDefinition } from './projectsRegistry';
+import { isPathInsideVault } from './validation';
 
 export type DetectedItemType =
   | 'scenario'
@@ -464,7 +465,7 @@ export async function auditDirectoryProject(options: {
       suggestedTargetFolder: suggestedFolder,
       suggestedAction,
       confidence,
-      selectedForMove: isOutlier
+      selectedForMove: false
     });
   }
 
@@ -533,7 +534,7 @@ Return ONLY raw JSON with this exact structure:
               );
               if (item && item.detectedType !== 'junk') {
                 item.isOutlier = true;
-                item.selectedForMove = true;
+                item.selectedForMove = false;
                 item.coherenceScore = Math.min(item.coherenceScore, 25);
                 if (out.reason) item.contradictionReason = out.reason;
                 if (out.suggested_folder) item.suggestedTargetFolder = out.suggested_folder.replace(/\\/g, '/');
@@ -658,6 +659,22 @@ export async function applyRevisionPlan(options: {
 
   for (const item of itemsToMove) {
     try {
+      if (!isPathInsideVault(item.filePath, vaultPath)) {
+        errors.push(`Security Error: Source file path is outside vault: ${item.filePath}`);
+        continue;
+      }
+
+      const action = item.action || (item.detectedType === 'junk' ? 'delete_junk' : 'move');
+      const cleanTargetDir = (item.targetFolder || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      const destDir = path.join(vaultPath, cleanTargetDir);
+
+      if (action !== 'delete_junk') {
+        if (!cleanTargetDir || !isPathInsideVault(destDir, vaultPath)) {
+          errors.push(`Security Error: Target folder is outside vault: ${item.targetFolder}`);
+          continue;
+        }
+      }
+
       if (!fs.existsSync(item.filePath)) {
         errors.push(`File not found: ${path.basename(item.filePath)}`);
         continue;
@@ -690,8 +707,6 @@ export async function applyRevisionPlan(options: {
         }
       }
 
-      const action = item.action || (item.detectedType === 'junk' ? 'delete_junk' : 'move');
-
       // --- ACTION 1: DELETE JUNK ---
       if (action === 'delete_junk') {
         await fsPromises.unlink(item.filePath);
@@ -699,8 +714,6 @@ export async function applyRevisionPlan(options: {
         continue;
       }
 
-      const cleanTargetDir = item.targetFolder.replace(/\\/g, '/').replace(/^\/+/, '');
-      const destDir = path.join(vaultPath, cleanTargetDir);
       await fsPromises.mkdir(destDir, { recursive: true });
 
       // --- ACTION 2: CONVERT RAW DOC TO MARKDOWN ---

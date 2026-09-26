@@ -25,6 +25,38 @@ export interface CalibrationOptions {
 }
 
 /**
+ * Checks whether `<vaultPath>/99_System/index/thresholds.json` exists and has `calibrated === true` (R4).
+ */
+export function isCalibrated(vaultPath: string): boolean {
+  if (!vaultPath) return false;
+  try {
+    const thresholdsPath = path.join(vaultPath, '99_System', 'index', 'thresholds.json');
+    if (!fs.existsSync(thresholdsPath)) return false;
+    const raw = fs.readFileSync(thresholdsPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed && parsed.calibrated === true);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Enforces calibration gate when loading config on startup: if decisionMode is 'fast_routing'
+ * without valid calibration, logs a warning and falls back to 'hybrid' (R4).
+ */
+export function applyCalibrationGateOnLoad<T extends { vaultPath: string; decisionMode?: 'hybrid' | 'fast_routing' }>(
+  cfg: T,
+  onWarn?: (msg: string) => void
+): T {
+  if (cfg.decisionMode === 'fast_routing' && !isCalibrated(cfg.vaultPath)) {
+    const msg = `[Calibration Gate] decisionMode='fast_routing' requires calibrated 99_System/index/thresholds.json (calibrated: true). Reverting decisionMode to 'hybrid'.`;
+    if (onWarn) onWarn(msg);
+    return { ...cfg, decisionMode: 'hybrid' };
+  }
+  return cfg;
+}
+
+/**
  * Executes threshold calibration over organic user notes to establish an empirical confidence gate.
  * Resolves D8 and fulfills C6.
  */

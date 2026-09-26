@@ -14,6 +14,9 @@ import { extractTags } from './src/server/tags';
 import { sanitizeTitle } from './src/server/sanitize';
 import { createSnapshotSession, restoreSnapshotSession, SnapshotSession } from './src/server/snapshot';
 import {
+  resolveHost,
+  resolveIsDevMode,
+  isInboxPathIgnored,
   isPathInsideVault,
   isAllowedHost,
   isAllowedOrigin,
@@ -52,8 +55,10 @@ import {
 import { checkGhostNote, isJunkFile } from './src/server/documentExtractor';
 import { triageManager } from './src/server/triageManager';
 import { routeHierarchical, HierarchicalRouterConfig } from './src/server/llm/hierarchicalRouter';
-import { calibrateThreshold } from './src/server/calibration';
+import { calibrateThreshold, isCalibrated, applyCalibrationGateOnLoad } from './src/server/calibration';
 import { loadProjectsRegistry, bootstrapProjectsYaml } from './src/server/projectsRegistry';
+
+export { resolveHost, resolveIsDevMode, isInboxPathIgnored, isCalibrated, applyCalibrationGateOnLoad };
 import { chooseOne, askYesNo } from './src/server/llm/router';
 import {
   TokensRegistry,
@@ -93,9 +98,9 @@ process.on('unhandledRejection', (reason: any) => {
   } catch {}
 });
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = resolveHost(process.env);
 
 app.use(express.json());
 
@@ -206,13 +211,6 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise
     ]).finally(() => clearTimeout(timeoutId));
 };
 
-try {
-  if (fs.existsSync(CONFIG_FILE)) {
-    const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    currentConfig = { ...currentConfig, ...savedConfig };
-  }
-} catch(e) {}
-
 let logs: { timestamp: string, message: string, type: 'info' | 'error' | 'success' | 'warn' }[] = [];
 
 function addLog(message: string, type: 'info' | 'error' | 'success' | 'warn' = 'info') {
@@ -221,6 +219,19 @@ function addLog(message: string, type: 'info' | 'error' | 'success' | 'warn' = '
   if (logs.length > 200) logs.pop();
   console.log(`[${type.toUpperCase()}] ${message}`);
 }
+
+export function loadConfigFromFile(configFilePath: string = CONFIG_FILE, baseConfig = currentConfig) {
+  let loaded = { ...baseConfig };
+  try {
+    if (fs.existsSync(configFilePath)) {
+      const savedConfig = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
+      loaded = { ...loaded, ...savedConfig };
+    }
+  } catch (e) {}
+  return applyCalibrationGateOnLoad(loaded, (msg) => addLog(msg, 'warn'));
+}
+
+currentConfig = loadConfigFromFile(CONFIG_FILE, currentConfig);
 
 // --- Queue System with Exponential Backoff ---
 interface QueueItem {
@@ -1717,6 +1728,12 @@ app.post('/api/config', async (req, res) => {
       details: parseResult.error.issues.map(e => ({ path: e.path.join('.'), message: e.message }))
     });
   }
+
+  if (parseResult.data.decisionMode === 'fast_routing' && !isCalibrated(parseResult.data.vaultPath)) {
+    return res.status(400).json({
+      error: 'Cannot enable fast_routing: vault is not calibrated. Run calibration first so 99_System/index/thresholds.json exists with calibrated: true.'
+    });
+  }
   
   currentConfig = parseResult.data;
   try {
@@ -1755,13 +1772,12 @@ app.post('/api/start', async (req, res) => {
   addLog(`Started watching ${inboxPath}`, 'success');
   
   watcher = chokidar.watch(inboxPath, {
-    ignored: [
-      /(^|[\\/])\../,
-      (testPath: string) => {
-         const parts = testPath.split(path.sep);
-         return parts.includes('Review') || parts.includes('Processed');
-      }
-    ],
+    ignored: (testPath: string) => {
+      const rel = path.relative(inboxPath, testPath);
+      if (rel.startsWith('..')) return false;
+      const parts = rel.split(path.sep).filter(Boolean);
+      return parts.some(seg => seg.startsWith('.')) || parts.includes('Review') || parts.includes('Processed');
+    },
     persistent: true,
     depth: 99,
     ignoreInitial: false, // Important: Process existing files on start
@@ -3550,7 +3566,7 @@ async function startServer() {
       } catch {}
     }, 1500);
   }
-  if (process.env.NODE_ENV !== "production") {
+  if (resolveIsDevMode(process.env)) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -3574,6 +3590,8 @@ async function startServer() {
   httpServer.headersTimeout = 125000;
 }
 
-startServer().catch((err) => {
-  console.error('[Fatal Server Startup Error]:', err);
-});
+if (!process.env.VITEST) {
+  startServer().catch((err) => {
+    console.error('[Fatal Server Startup Error]:', err);
+  });
+}

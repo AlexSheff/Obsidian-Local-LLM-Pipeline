@@ -3,6 +3,30 @@ import path from 'path';
 import fs from 'fs';
 
 /**
+ * Resolves the default HTTP server host binding (R1: localhost by default for security).
+ */
+export function resolveHost(env: NodeJS.ProcessEnv = process.env): string {
+  return env.HOST || '127.0.0.1';
+}
+
+/**
+ * Determines whether Vite dev middleware should be enabled (R2: explicit opt-in via NODE_ENV === 'development').
+ */
+export function resolveIsDevMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV === 'development';
+}
+
+/**
+ * Determines whether a path inside 00_Inbox should be ignored by the file watcher (R7: relative to inboxPath).
+ */
+export function isInboxPathIgnored(inboxPath: string, testPath: string): boolean {
+  const rel = path.relative(inboxPath, testPath);
+  if (rel.startsWith('..')) return false;
+  const parts = rel.split(path.sep).filter(Boolean);
+  return parts.some(seg => seg.startsWith('.')) || parts.includes('Review') || parts.includes('Processed');
+}
+
+/**
  * Checks if a target path is strictly inside the vault path (no path traversal).
  * When allowRoot is true, the vault root itself is considered a valid target directory.
  */
