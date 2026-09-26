@@ -7,16 +7,12 @@ import {
   Play,
   Square,
   RefreshCw,
-  Sliders,
-  ShieldCheck,
-  CheckCircle2,
-  AlertTriangle,
   Folder,
   Download,
   Sparkles,
-  Layers,
   Check,
-  XCircle
+  XCircle,
+  CheckCircle2
 } from 'lucide-react';
 
 interface ModelInfo {
@@ -33,6 +29,9 @@ interface ServerStatus {
   port: number;
   url: string;
   modelFilename: string;
+  loadedModel?: string | null;
+  loadedModelPath?: string | null;
+  liveContextSize?: number | null;
   status: 'running' | 'stopped' | 'starting' | 'error';
   pid?: number;
   lastError?: string;
@@ -64,8 +63,9 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
 }) => {
   const [loading, setLoading] = useState(true);
   const [modelsDir, setModelsDir] = useState(
-    config.modelsPath || 'D:/Obsidian/Alex/Vault/llm/models'
+    config.modelsPath || './llm/models'
   );
+  const [modelsDirExists, setModelsDirExists] = useState<boolean>(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [profiles, setProfiles] = useState<MemoryProfile[]>([]);
   const [primaryServer, setPrimaryServer] = useState<ServerStatus | null>(null);
@@ -74,6 +74,7 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
   const [binaryPathInput, setBinaryPathInput] = useState(config.llamaServerBinary || '');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [scriptsResult, setScriptsResult] = useState<any>(null);
+  const [bannerMessage, setBannerMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Profile selection
   const [selectedProfile, setSelectedProfile] = useState<string>(
@@ -121,6 +122,10 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
         setPrimaryServer(res.data.primaryServer || null);
         setJevServer(res.data.jevServer || null);
         setDetectedBinary(res.data.detectedBinary || null);
+        if (res.data.modelsDir) {
+          setModelsDir(res.data.modelsDir);
+        }
+        setModelsDirExists(!!res.data.modelsDirExists);
       }
     } catch (e) {
       console.error('Failed to load model server status', e);
@@ -131,14 +136,26 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
 
   const handleScanDirectory = async () => {
     setActionLoading('scan');
+    setBannerMessage(null);
     try {
       const res = await axios.post('/api/models/list', { dirPath: modelsDir });
       setModels(res.data.models || []);
-      const updated = { ...config, modelsPath: modelsDir };
+      setModelsDirExists(!!res.data.modelsDirExists);
+      if (res.data.modelsDir) {
+        setModelsDir(res.data.modelsDir);
+      }
+      const updated = { ...config, modelsPath: res.data.modelsDir || modelsDir };
       await onSaveConfig(updated);
+      setBannerMessage({
+        type: 'success',
+        text: `Scanned directory "${res.data.modelsDir || modelsDir}": found ${(res.data.models || []).length} .gguf file(s).`
+      });
       onNotify();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to scan models directory');
+      setBannerMessage({
+        type: 'error',
+        text: err.response?.data?.error || 'Failed to scan models directory'
+      });
     } finally {
       setActionLoading(null);
     }
@@ -159,11 +176,19 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
     };
 
     setActionLoading('profile');
+    setBannerMessage(null);
     try {
       await onSaveConfig(updated);
+      setBannerMessage({
+        type: 'success',
+        text: `Saved preset "${profile.name}" to config (note: this updates default startup settings, it does not reload an already running terminal server).`
+      });
       onNotify();
     } catch (e: any) {
-      alert('Failed to save profile: ' + e.message);
+      setBannerMessage({
+        type: 'error',
+        text: 'Failed to save profile: ' + (e.response?.data?.error || e.message)
+      });
     } finally {
       setActionLoading(null);
     }
@@ -171,6 +196,7 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
 
   const handleSaveEngineSettings = async () => {
     setActionLoading('save_settings');
+    setBannerMessage(null);
     try {
       const updated = {
         ...config,
@@ -185,10 +211,17 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
         llamaServerBinary: binaryPathInput
       };
       await onSaveConfig(updated);
-      alert('Local AI Engine settings saved successfully.');
+      await fetchStatus();
+      setBannerMessage({
+        type: 'success',
+        text: 'Local AI Engine settings saved and live server telemetry refreshed.'
+      });
       onNotify();
     } catch (err: any) {
-      alert('Failed to save engine settings: ' + err.message);
+      setBannerMessage({
+        type: 'error',
+        text: 'Failed to save engine settings: ' + (err.response?.data?.error || err.message)
+      });
     } finally {
       setActionLoading(null);
     }
@@ -196,27 +229,29 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
 
   const handleToggleServer = async (serverType: 'primary' | 'jev', action: 'start' | 'stop') => {
     setActionLoading(`${serverType}_${action}`);
+    setBannerMessage(null);
     try {
-      const endpoint =
-        action === 'start' ? '/api/models/server/start' : '/api/models/server/stop';
-      const payload =
-        action === 'start'
-          ? {
-              serverType,
-              modelFile:
-                serverType === 'primary'
-                  ? config.primaryModelFile || 'Hermes-3-Llama-3.2-3B.Q4_K_M.gguf'
-                  : config.jevModelFile || 'Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf',
-              binaryPath: binaryPathInput || undefined
-            }
-          : { serverType };
+      const modelFilename =
+        serverType === 'primary'
+          ? config.primaryModelFile || 'Hermes-3-Llama-3.2-3B.Q4_K_M.gguf'
+          : config.jevModelFile || 'Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf';
 
-      const res = await axios.post(endpoint, payload);
-      alert(res.data.message || `Server ${serverType} ${action}ed`);
+      const res = await axios.post('/api/models/control', {
+        type: serverType,
+        action,
+        modelFilename
+      });
+      setBannerMessage({
+        type: 'success',
+        text: res.data.message || `Server ${serverType} ${action}ed`
+      });
       await fetchStatus();
       onNotify();
     } catch (err: any) {
-      alert(err.response?.data?.error || `Failed to ${action} ${serverType} server`);
+      setBannerMessage({
+        type: 'error',
+        text: err.response?.data?.error || `Failed to ${action} ${serverType} server`
+      });
     } finally {
       setActionLoading(null);
     }
@@ -224,16 +259,23 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
 
   const handleGenerateScripts = async () => {
     setActionLoading('scripts');
+    setBannerMessage(null);
     try {
       const res = await axios.post('/api/models/generate-scripts', {
         modelsDir,
         binaryPath: binaryPathInput || undefined
       });
       setScriptsResult(res.data);
-      alert('Start scripts generated in: ' + res.data.scriptsDir);
+      setBannerMessage({
+        type: 'success',
+        text: `Startup .bat scripts generated in: ${res.data.directory || res.data.scriptsDir}`
+      });
       onNotify();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to generate scripts');
+      setBannerMessage({
+        type: 'error',
+        text: err.response?.data?.error || 'Failed to generate scripts'
+      });
     } finally {
       setActionLoading(null);
     }
@@ -271,40 +313,220 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
     }
   };
 
+  // Count how many servers are ACTUALLY running right now
+  const liveLoadedServers = [
+    primaryServer?.status === 'running'
+      ? {
+          role: 'Primary LLM (Port ' + (primaryServer.port || 8080) + ')',
+          model: primaryServer.loadedModel || primaryServer.modelFilename,
+          path: primaryServer.loadedModelPath,
+          ctx: primaryServer.liveContextSize
+        }
+      : null,
+    jevServer?.status === 'running'
+      ? {
+          role: 'Decision Router (Port ' + (jevServer.port || 1234) + ')',
+          model: jevServer.loadedModel || jevServer.modelFilename,
+          path: jevServer.loadedModelPath,
+          ctx: jevServer.liveContextSize
+        }
+      : null
+  ].filter(Boolean) as Array<{
+    role: string;
+    model: string;
+    path?: string | null;
+    ctx?: number | null;
+  }>;
+
   return (
     <div className="space-y-6">
-      {/* Top Banner: Architecture & Safe Memory Allocation */}
-      <div className="bg-white rounded-2xl border border-neutral-200/80 p-6 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-neutral-100">
+      {bannerMessage && (
+        <div
+          className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+            bannerMessage.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {bannerMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            ) : (
+              <XCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            )}
+            <span>{bannerMessage.text}</span>
+          </div>
+          <button
+            onClick={() => setBannerMessage(null)}
+            className="text-[11px] underline ml-4 opacity-75 hover:opacity-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Top Banner: Live Loaded Models Telemetry vs Configuration Presets */}
+      <div className="bg-white rounded-2xl border border-neutral-200/80 p-6 shadow-xs space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center">
               <Cpu className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-neutral-900">
-                Local AI Engine & 16GB RAM Architecture
+                Local AI Engine & Live Server Telemetry
               </h2>
               <p className="text-xs text-neutral-500">
-                Calibrated Dual-Server Pipeline: 100ms Jev Decision Router + 3B Synthesis Model
+                Real-time inspection via <code className="font-mono">/props</code> &{' '}
+                <code className="font-mono">/v1/models</code> on active llama-server endpoints
               </p>
             </div>
           </div>
 
-          <button
-            onClick={fetchStatus}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-xs text-neutral-600 hover:text-neutral-900 border border-neutral-200 rounded-lg px-2.5 py-1.5 transition-colors self-start md:self-auto"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh Status
-          </button>
+          <div className="flex items-center gap-3">
+            <span
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                liveLoadedServers.length > 0
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-neutral-100 text-neutral-600'
+              }`}
+            >
+              {liveLoadedServers.length} Model{liveLoadedServers.length === 1 ? '' : 's'} Currently Loaded in RAM
+            </span>
+
+            <button
+              onClick={fetchStatus}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-xs text-neutral-600 hover:text-neutral-900 border border-neutral-200 rounded-lg px-2.5 py-1.5 transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              Refresh Live Status
+            </button>
+          </div>
         </div>
 
-        {/* Memory Profiles */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
+        {/* Currently Loaded in Memory (Real-Time) */}
+        <div>
+          <div className="text-xs font-semibold text-neutral-700 mb-2">
+            Currently Loaded in Running llama-server Instances ({liveLoadedServers.length}):
+          </div>
+          {liveLoadedServers.length === 0 ? (
+            <div className="p-3.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs text-neutral-500">
+              No running <code className="font-mono">llama-server</code> detected on{' '}
+              <code className="font-mono">{llamaUrl}</code> or{' '}
+              <code className="font-mono">{decisionUrl}</code>. Start a server in your terminal or click Refresh.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {liveLoadedServers.map((srv, idx) => (
+                <div
+                  key={idx}
+                  className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      {srv.role} — ONLINE
+                    </div>
+                    <div
+                      className="text-xs font-mono font-bold text-neutral-900 truncate mt-1"
+                      title={srv.path || srv.model}
+                    >
+                      {srv.model}
+                    </div>
+                    {srv.path && srv.path !== srv.model && (
+                      <div className="text-[11px] font-mono text-neutral-500 truncate">
+                        Path: {srv.path}
+                      </div>
+                    )}
+                  </div>
+                  {srv.ctx && (
+                    <span className="shrink-0 text-[11px] font-mono bg-white border border-emerald-200 text-emerald-800 px-2 py-1 rounded-md">
+                      n_ctx: {srv.ctx}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Scanned .gguf Models on Disk */}
+        <div className="pt-3 border-t border-neutral-100">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-neutral-700 flex items-center gap-1.5">
+              <Folder className="w-3.5 h-3.5 text-neutral-500" />
+              Models Found on Disk in <code className="font-mono text-[11px]">{modelsDir}</code> ({models.length}):
+            </span>
+            <span className="text-[11px] text-neutral-400">
+              {modelsDirExists ? 'Directory found' : 'Directory not found — adjust Models Path below'}
+            </span>
+          </div>
+
+          {models.length === 0 ? (
+            <div className="p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-xs text-neutral-400">
+              No <code className="font-mono">.gguf</code> files found in <code className="font-mono">{modelsDir}</code>. Set your models folder path below and click Scan.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {models.map(m => {
+                const isLoadedInPrimary =
+                  primaryServer?.status === 'running' &&
+                  primaryServer.loadedModel?.toLowerCase() === m.filename.toLowerCase();
+                const isLoadedInJev =
+                  jevServer?.status === 'running' &&
+                  jevServer.loadedModel?.toLowerCase() === m.filename.toLowerCase();
+                const isLoadedNow = isLoadedInPrimary || isLoadedInJev;
+
+                return (
+                  <div
+                    key={m.filename}
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      isLoadedNow
+                        ? 'border-emerald-500 bg-emerald-50/40 shadow-xs'
+                        : 'border-neutral-200 bg-neutral-50/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          isLoadedNow
+                            ? 'bg-emerald-600 text-white'
+                            : m.isDecisionModel
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-neutral-200 text-neutral-700'
+                        }`}
+                      >
+                        {isLoadedInPrimary
+                          ? `LOADED IN RAM (PORT ${primaryServer?.port || 8080})`
+                          : isLoadedInJev
+                          ? `LOADED IN RAM (PORT ${jevServer?.port || 1234})`
+                          : 'ON DISK (NOT LOADED)'}
+                      </span>
+                      <span className="text-[11px] font-mono text-neutral-500">{m.sizeGb} GB</span>
+                    </div>
+                    <div
+                      className="text-xs font-mono font-semibold text-neutral-900 truncate"
+                      title={m.fullPath}
+                    >
+                      {m.filename}
+                    </div>
+                    <div className="text-[11px] text-neutral-500 mt-2 pt-1.5 border-t border-neutral-200/60 flex justify-between font-mono">
+                      <span>Est. RAM (-c 2048):</span>
+                      <span className="font-semibold text-neutral-800">~{m.estimatedRamGb} GB</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Memory Presets (Templates, Not Running Models) */}
+        <div className="pt-3 border-t border-neutral-100">
+          <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-neutral-700">
-              Hardware Profile & RAM Allocation:
+              Startup Configuration Presets (Templates for .bat / UI Start — Not Loaded Models):
             </span>
             <span className="text-xs text-neutral-400">Target: 16 GB System RAM</span>
           </div>
@@ -316,29 +538,25 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
                 <div
                   key={p.id}
                   onClick={() => handleApplyProfile(p.id)}
-                  className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
                     isSelected
                       ? 'border-neutral-900 bg-neutral-50 shadow-xs'
                       : 'border-neutral-200 hover:border-neutral-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center justify-between mb-1">
                     <span className="font-semibold text-xs text-neutral-900">{p.name}</span>
-                    <span
-                      className={`text-[11px] font-mono font-bold ${
-                        p.fits16GbRamSafely ? 'text-emerald-600' : 'text-amber-600'
-                      }`}
-                    >
-                      ~{p.totalEstimatedRamGb.toFixed(1)} GB RAM
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">
+                      Preset (~{p.totalEstimatedRamGb.toFixed(1)} GB)
                     </span>
                   </div>
-                  <p className="text-xs text-neutral-500 mb-3">{p.description}</p>
-                  <div className="flex items-center justify-between text-[11px] text-neutral-500 border-t border-neutral-200/60 pt-2 font-mono">
+                  <p className="text-[11px] text-neutral-500 mb-2">{p.description}</p>
+                  <div className="flex items-center justify-between text-[11px] text-neutral-500 border-t border-neutral-200/60 pt-1.5 font-mono">
                     <span>Ctx: {p.contextSize}</span>
                     <span>Threads: {p.threads}</span>
                     {isSelected && (
                       <span className="text-neutral-900 font-semibold flex items-center gap-0.5">
-                        <Check className="w-3 h-3 text-emerald-600" /> Active
+                        <Check className="w-3 h-3 text-emerald-600" /> Selected Preset
                       </span>
                     )}
                   </div>
@@ -377,14 +595,29 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
               </span>
             </div>
             <div className="flex justify-between items-center py-1 border-t border-neutral-100">
-              <span className="text-neutral-500">Active Model:</span>
-              <span className="font-mono text-neutral-800 text-[11px]">
+              <span className="text-neutral-500">Loaded in Server (Live):</span>
+              <span
+                className={`font-mono text-[11px] font-semibold ${
+                  primaryServer?.status === 'running' ? 'text-emerald-700' : 'text-neutral-400'
+                }`}
+              >
+                {primaryServer?.status === 'running'
+                  ? primaryServer.loadedModel || primaryServer.modelFilename
+                  : 'None (server stopped)'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-t border-neutral-100">
+              <span className="text-neutral-500">Configured Default (for Start button):</span>
+              <span className="font-mono text-neutral-600 text-[11px]">
                 {config.primaryModelFile || 'Hermes-3-Llama-3.2-3B.Q4_K_M.gguf'}
               </span>
             </div>
             <div className="flex justify-between items-center py-1 border-t border-neutral-100">
               <span className="text-neutral-500">Context Window & Timeout:</span>
               <span className="font-mono text-neutral-800">
+                {primaryServer?.liveContextSize
+                  ? `${primaryServer.liveContextSize} tokens (live) · `
+                  : ''}
                 {maxContextChars} chars · {timeoutSec}s timeout
               </span>
             </div>
@@ -396,7 +629,7 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
                   disabled={actionLoading === 'primary_stop'}
                   className="flex-1 bg-red-50 text-red-700 hover:bg-red-100 px-3 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5"
                 >
-                  <Square className="w-3.5 h-3.5" /> Stop Server
+                  <Square className="w-3.5 h-3.5" /> Stop Managed Server
                 </button>
               ) : (
                 <button
@@ -437,8 +670,20 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
               </span>
             </div>
             <div className="flex justify-between items-center py-1 border-t border-neutral-100">
-              <span className="text-neutral-500">Active Model:</span>
-              <span className="font-mono text-neutral-800 text-[11px]">
+              <span className="text-neutral-500">Loaded in Server (Live):</span>
+              <span
+                className={`font-mono text-[11px] font-semibold ${
+                  jevServer?.status === 'running' ? 'text-emerald-700' : 'text-neutral-400'
+                }`}
+              >
+                {jevServer?.status === 'running'
+                  ? jevServer.loadedModel || jevServer.modelFilename
+                  : 'None (server stopped)'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-t border-neutral-100">
+              <span className="text-neutral-500">Configured Default (for Start button):</span>
+              <span className="font-mono text-neutral-600 text-[11px]">
                 {config.jevModelFile || 'Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf'}
               </span>
             </div>
@@ -456,7 +701,7 @@ export const LocalEngineWorkspace: React.FC<LocalEngineWorkspaceProps> = ({
                   disabled={actionLoading === 'jev_stop'}
                   className="flex-1 bg-red-50 text-red-700 hover:bg-red-100 px-3 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5"
                 >
-                  <Square className="w-3.5 h-3.5" /> Stop Server
+                  <Square className="w-3.5 h-3.5" /> Stop Managed Server
                 </button>
               ) : (
                 <button

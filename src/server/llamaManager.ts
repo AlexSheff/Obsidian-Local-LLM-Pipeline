@@ -18,6 +18,9 @@ export interface ManagedServerState {
   port: number;
   url: string;
   modelFilename: string;
+  loadedModel?: string | null;
+  loadedModelPath?: string | null;
+  liveContextSize?: number | null;
   status: 'running' | 'stopped' | 'starting' | 'error';
   pid?: number;
   lastError?: string;
@@ -61,6 +64,42 @@ class LlamaManager {
     modelFilename: KNOWN_MODELS.JEV_2B,
     status: 'stopped'
   };
+
+  /**
+   * Resolves the best existing directory containing .gguf models.
+   */
+  public resolveModelsDirectory(preferredDir?: string, vaultPath?: string, detectedModelPaths: (string | null | undefined)[] = []): string {
+    const candidates: string[] = [];
+    if (preferredDir && preferredDir.trim()) {
+      candidates.push(preferredDir.trim());
+    }
+    for (const mp of detectedModelPaths) {
+      if (mp && mp.trim()) {
+        const normalized = mp.trim().replace(/\\/g, '/');
+        const dir = path.dirname(normalized);
+        if (dir && dir !== '.') {
+          candidates.push(path.resolve(process.cwd(), dir));
+          if (vaultPath) candidates.push(path.resolve(vaultPath, dir));
+        }
+      }
+    }
+    candidates.push(path.resolve(process.cwd(), 'llm/models'));
+    candidates.push(path.resolve(process.cwd(), 'models'));
+    if (vaultPath) {
+      candidates.push(path.resolve(vaultPath, 'llm/models'));
+      candidates.push(path.resolve(vaultPath, '../llm/models'));
+    }
+
+    for (const c of candidates) {
+      try {
+        if (fs.existsSync(c) && fs.statSync(c).isDirectory()) {
+          return c;
+        }
+      } catch {}
+    }
+
+    return preferredDir || path.resolve(process.cwd(), 'llm/models');
+  }
 
   /**
    * Scans a directory for GGUF model files and calculates memory estimations.
@@ -179,16 +218,67 @@ class LlamaManager {
 
   /**
    * Fast check if a port or URL is already being served by an active llama-server.
+   * Queries both /props and /v1/models to extract the actual loaded GGUF filename, path, and context window.
    */
-  public async probeServer(url: string, timeoutMs = 1200): Promise<{ online: boolean; model?: string }> {
+  public async probeServer(url: string, timeoutMs = 1200): Promise<{
+    online: boolean;
+    model?: string;
+    modelPath?: string;
+    contextSize?: number;
+  }> {
+    const baseUrl = url.replace(/\/+$/, '');
+    let modelName: string | undefined;
+    let modelPath: string | undefined;
+    let contextSize: number | undefined;
+    let online = false;
+
     try {
-      const resp = await axios.get(`${url.replace(/\/+$/, '')}/v1/models`, { timeout: timeoutMs });
-      const models = resp.data?.data;
-      const modelName = Array.isArray(models) && models.length > 0 ? (models[0].id || models[0].name) : undefined;
-      return { online: true, model: modelName };
+      const propsResp = await axios.get(`${baseUrl}/props`, { timeout: timeoutMs });
+      if (propsResp.status === 200 && propsResp.data) {
+        online = true;
+        const rawPath =
+          propsResp.data.model_path ||
+          propsResp.data.default_generation_settings?.model ||
+          propsResp.data.model;
+        if (typeof rawPath === 'string' && rawPath.trim()) {
+          modelPath = rawPath.trim();
+          const base = path.posix.basename(modelPath.replace(/\\/g, '/'));
+          if (base) modelName = base;
+        }
+        const nCtx = propsResp.data.default_generation_settings?.n_ctx;
+        if (typeof nCtx === 'number' && nCtx > 0) {
+          contextSize = nCtx;
+        }
+      }
     } catch {
-      return { online: false };
+      // /props might not be supported or server is offline; fall back to /v1/models
     }
+
+    try {
+      const resp = await axios.get(`${baseUrl}/v1/models`, { timeout: timeoutMs });
+      online = true;
+      const models = resp.data?.data;
+      const rawId =
+        Array.isArray(models) && models.length > 0
+          ? models[0].id || models[0].name
+          : undefined;
+      if (typeof rawId === 'string' && rawId.trim()) {
+        if (!modelPath) {
+          modelPath = rawId.trim();
+        }
+        const base = path.posix.basename(rawId.trim().replace(/\\/g, '/'));
+        // Prefer a filename ending in .gguf over a generic alias like 'primary-llm'
+        if (!modelName || (base.toLowerCase().endsWith('.gguf') && !modelName.toLowerCase().endsWith('.gguf'))) {
+          modelName = base;
+        }
+      }
+    } catch {
+      if (!online) {
+        return { online: false };
+      }
+    }
+
+    return { online: true, model: modelName, modelPath, contextSize };
   }
 
   /**
@@ -455,13 +545,33 @@ class LlamaManager {
   }
 
   /**
-   * Gets current state of both server instances.
+   * Gets current state of both server instances with real-time model inspection.
    */
-  public async getStatus(): Promise<{
+  public async getStatus(options?: {
+    primaryUrl?: string;
+    jevUrl?: string;
+    configuredPrimaryModel?: string;
+    configuredJevModel?: string;
+  }): Promise<{
     primary: ManagedServerState;
     jev: ManagedServerState;
     memorySafe: boolean;
   }> {
+    if (options?.primaryUrl) {
+      this.primaryState.url = options.primaryUrl;
+      try {
+        const u = new URL(options.primaryUrl);
+        if (u.port) this.primaryState.port = Number(u.port);
+      } catch {}
+    }
+    if (options?.jevUrl) {
+      this.jevState.url = options.jevUrl;
+      try {
+        const u = new URL(options.jevUrl);
+        if (u.port) this.jevState.port = Number(u.port);
+      } catch {}
+    }
+
     // Re-verify health asynchronously
     const [primaryProbe, jevProbe] = await Promise.all([
       this.probeServer(this.primaryState.url, 800),
@@ -470,14 +580,42 @@ class LlamaManager {
 
     if (primaryProbe.online) {
       this.primaryState.status = 'running';
-    } else if (this.primaryState.status === 'running') {
-      this.primaryState.status = 'stopped';
+      this.primaryState.loadedModel = primaryProbe.model || 'Unknown model (online)';
+      this.primaryState.loadedModelPath = primaryProbe.modelPath || null;
+      this.primaryState.liveContextSize = primaryProbe.contextSize || null;
+      if (primaryProbe.model) {
+        this.primaryState.modelFilename = primaryProbe.model;
+      }
+    } else {
+      if (this.primaryState.status === 'running') {
+        this.primaryState.status = 'stopped';
+      }
+      this.primaryState.loadedModel = null;
+      this.primaryState.loadedModelPath = null;
+      this.primaryState.liveContextSize = null;
+      if (options?.configuredPrimaryModel) {
+        this.primaryState.modelFilename = options.configuredPrimaryModel;
+      }
     }
 
     if (jevProbe.online) {
       this.jevState.status = 'running';
-    } else if (this.jevState.status === 'running') {
-      this.jevState.status = 'stopped';
+      this.jevState.loadedModel = jevProbe.model || 'Unknown model (online)';
+      this.jevState.loadedModelPath = jevProbe.modelPath || null;
+      this.jevState.liveContextSize = jevProbe.contextSize || null;
+      if (jevProbe.model) {
+        this.jevState.modelFilename = jevProbe.model;
+      }
+    } else {
+      if (this.jevState.status === 'running') {
+        this.jevState.status = 'stopped';
+      }
+      this.jevState.loadedModel = null;
+      this.jevState.loadedModelPath = null;
+      this.jevState.liveContextSize = null;
+      if (options?.configuredJevModel) {
+        this.jevState.modelFilename = options.configuredJevModel;
+      }
     }
 
     return {

@@ -3447,11 +3447,20 @@ app.post('/api/vault/reorganize-all', async (req, res) => {
 // --- Local Llama & Jev Model Server Management Endpoints ---
 
 app.get('/api/models/status', async (req, res) => {
-  const modelsDir = currentConfig.modelsPath || 'D:/Obsidian/Alex/Vault/llm/models';
+  const serverStatus = await llamaManager.getStatus({
+    primaryUrl: currentConfig.llamaUrl,
+    jevUrl: currentConfig.decisionModelUrl,
+    configuredPrimaryModel: currentConfig.primaryModelFile,
+    configuredJevModel: currentConfig.jevModelFile
+  });
+  const modelsDir = llamaManager.resolveModelsDirectory(
+    currentConfig.modelsPath,
+    currentConfig.vaultPath,
+    [serverStatus.primary.loadedModelPath, serverStatus.jev.loadedModelPath]
+  );
   const models = llamaManager.scanModelsDirectory(modelsDir);
   const profiles = llamaManager.getMemoryProfiles();
   const detectedBinary = llamaManager.findLlamaServerBinary(currentConfig.llamaServerBinary, modelsDir);
-  const serverStatus = await llamaManager.getStatus();
 
   res.json({
     modelsDir,
@@ -3471,6 +3480,17 @@ app.get('/api/models/status', async (req, res) => {
   });
 });
 
+app.post('/api/models/list', async (req, res) => {
+  const rawDir = typeof req.body?.dirPath === 'string' ? req.body.dirPath.trim() : '';
+  const modelsDir = llamaManager.resolveModelsDirectory(rawDir || currentConfig.modelsPath, currentConfig.vaultPath);
+  const models = llamaManager.scanModelsDirectory(modelsDir);
+  res.json({
+    modelsDir,
+    modelsDirExists: fs.existsSync(modelsDir),
+    models
+  });
+});
+
 app.post('/api/models/control', async (req, res) => {
   const parseResult = ServerControlSchema.safeParse(req.body);
   if (!parseResult.success) {
@@ -3478,14 +3498,19 @@ app.post('/api/models/control', async (req, res) => {
   }
 
   const { type, action, modelFilename } = parseResult.data;
-  const modelsDir = currentConfig.modelsPath || 'D:/Obsidian/Alex/Vault/llm/models';
+  const modelsDir = llamaManager.resolveModelsDirectory(currentConfig.modelsPath, currentConfig.vaultPath);
   const binary = llamaManager.findLlamaServerBinary(currentConfig.llamaServerBinary, modelsDir);
 
   if (action === 'stop') {
     llamaManager.stopServer(type);
     addLog(`[Llama Manager] Server (${type}) stopped.`, 'info');
-    const status = await llamaManager.getStatus();
-    return res.json({ success: true, status });
+    const status = await llamaManager.getStatus({
+      primaryUrl: currentConfig.llamaUrl,
+      jevUrl: currentConfig.decisionModelUrl,
+      configuredPrimaryModel: currentConfig.primaryModelFile,
+      configuredJevModel: currentConfig.jevModelFile
+    });
+    return res.json({ success: true, status, message: `Server (${type}) stopped.` });
   }
 
   if (!binary) {
@@ -3519,9 +3544,14 @@ app.post('/api/models/control', async (req, res) => {
       });
     }
 
-    const status = await llamaManager.getStatus();
+    const status = await llamaManager.getStatus({
+      primaryUrl: currentConfig.llamaUrl,
+      jevUrl: currentConfig.decisionModelUrl,
+      configuredPrimaryModel: currentConfig.primaryModelFile,
+      configuredJevModel: currentConfig.jevModelFile
+    });
     addLog(`[Llama Manager] Server status updated (Jev: ${status.jev.status}, Primary: ${status.primary.status})`, 'success');
-    res.json({ success: true, status });
+    res.json({ success: true, status, message: `Server (${type}) started.` });
   } catch (err: any) {
     addLog(`[Llama Manager] Control action failed: ${err.message}`, 'error');
     res.status(500).json({ error: err.message });
@@ -3529,7 +3559,7 @@ app.post('/api/models/control', async (req, res) => {
 });
 
 app.post('/api/models/generate-scripts', async (req, res) => {
-  const modelsDir = req.body.modelsDir || currentConfig.modelsPath || 'D:/Obsidian/Alex/Vault/llm/models';
+  const modelsDir = llamaManager.resolveModelsDirectory(req.body.modelsDir || currentConfig.modelsPath, currentConfig.vaultPath);
   const targetDir = req.body.targetDir || currentConfig.vaultPath || process.cwd();
 
   try {
@@ -3545,6 +3575,7 @@ app.post('/api/models/generate-scripts', async (req, res) => {
     res.json({
       success: true,
       directory: outDir,
+      scriptsDir: outDir,
       files: [
         'start_16gb_balanced_tandem.bat',
         'start_jev_decision_server.bat',
