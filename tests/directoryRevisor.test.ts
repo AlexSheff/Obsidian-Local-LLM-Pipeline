@@ -66,19 +66,47 @@ describe('Directory Revisor & Contradiction Analyzer', () => {
   });
 
   describe('detectProjectAffiliation', () => {
-    it('detects CleanNet project affiliation', () => {
-      const res = detectProjectAffiliation('План развития франшизы cleannet на второй квартал', 'Report.md');
+    const sampleVaultProjects = [
+      {
+        id: 'cleannet',
+        folder: '01_Projects/CleanNet',
+        aliases: ['CleanNet', 'Клиннет'],
+        coreDocTypes: ['Project Spec', 'Roadmap']
+      },
+      {
+        id: 'artmaze',
+        folder: '01_Projects/ArtMaze',
+        aliases: ['ArtMaze', 'Артмейз'],
+        coreDocTypes: ['Project Spec', 'Roadmap']
+      }
+    ];
+
+    it('detects CleanNet project affiliation from discovered vault projects', () => {
+      const res = detectProjectAffiliation(
+        'План развития франшизы cleannet на второй квартал',
+        'Report.md',
+        sampleVaultProjects
+      );
       expect(res).toBe('01_Projects/CleanNet');
     });
 
-    it('detects ArtMaze project affiliation', () => {
-      const res = detectProjectAffiliation('Концепция локаций для игры Артмейз', 'Locations.md');
+    it('detects ArtMaze project affiliation from discovered vault projects', () => {
+      const res = detectProjectAffiliation(
+        'Концепция локаций для игры Артмейз',
+        'Locations.md',
+        sampleVaultProjects
+      );
       expect(res).toBe('01_Projects/ArtMaze');
     });
 
-    it('returns null when no known project markers found', () => {
-      const res = detectProjectAffiliation('Рецепт приготовления яблочного пирога', 'Pie.md');
+    it('returns null when no known project markers found or when vault has no projects', () => {
+      const res = detectProjectAffiliation(
+        'Рецепт приготовления яблочного пирога',
+        'Pie.md',
+        sampleVaultProjects
+      );
       expect(res).toBeNull();
+      expect(detectProjectAffiliation('План cleannet', 'Report.md', [])).toBeNull();
     });
   });
 

@@ -432,7 +432,7 @@ export const DirectoryRevisor: React.FC<DirectoryRevisorProps> = ({ onNotify }) 
             </label>
             <input
               type="text"
-              placeholder="e.g. 01_Projects/CleanNet"
+              placeholder="e.g. 01_Projects/MyProject"
               value={customFolder}
               onChange={e => setCustomFolder(e.target.value)}
               className="w-full bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900 font-mono text-xs"

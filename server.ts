@@ -10,7 +10,13 @@ import mammoth from 'mammoth';
 import TurndownService from 'turndown';
 import 'dotenv/config';
 import { parseNote, serializeNote, mergeTags } from './src/server/frontmatter';
-import { extractTags } from './src/server/tags';
+import {
+  extractTags,
+  sanitizeTagList,
+  curateOrthogonalTags,
+  loadVaultTagTaxonomy,
+  saveVaultTagTaxonomy
+} from './src/server/tags';
 import { sanitizeTitle } from './src/server/sanitize';
 import { createSnapshotSession, restoreSnapshotSession, SnapshotSession } from './src/server/snapshot';
 import {
@@ -32,7 +38,12 @@ import {
   GenerateScriptsSchema
 } from './src/server/validation';
 import { llamaManager } from './src/server/llamaManager';
-import { auditDirectoryProject, applyRevisionPlan } from './src/server/directoryRevisor';
+import {
+  auditDirectoryProject,
+  applyRevisionPlan,
+  pruneEmptyDirectories,
+  pruneEmptyParentDirs
+} from './src/server/directoryRevisor';
 import {
   decide,
   isDecisionServerReachable,
@@ -53,9 +64,20 @@ import { checkGhostNote, isJunkFile } from './src/server/documentExtractor';
 import { triageManager } from './src/server/triageManager';
 import { z } from 'zod';
 import { generateStructured, GenerationError } from './src/server/llm/generate';
-import { routeHierarchical, HierarchicalRouterConfig } from './src/server/llm/hierarchicalRouter';
+import {
+  routeHierarchical,
+  HierarchicalRouterConfig,
+  validateAndSanitizeRoute,
+  preserveMeaningfulTitle
+} from './src/server/llm/hierarchicalRouter';
+import { runKnowledgeAgentTurn } from './src/server/knowledgeAgent';
 import { calibrateThreshold, isCalibrated, applyCalibrationGateOnLoad } from './src/server/calibration';
-import { loadProjectsRegistry, bootstrapProjectsYaml } from './src/server/projectsRegistry';
+import {
+  loadProjectsRegistry,
+  bootstrapProjectsYaml,
+  discoverVaultStructure,
+  detectProjectsRootFolder
+} from './src/server/projectsRegistry';
 
 export { resolveHost, resolveIsDevMode, isInboxPathIgnored, isCalibrated, applyCalibrationGateOnLoad };
 import { chooseOne, askYesNo } from './src/server/llm/router';
@@ -153,7 +175,7 @@ let currentConfig = {
   enableDecisionModel: false,
   decisionConfidenceThreshold: 0.80,
   decisionMode: 'hybrid' as 'hybrid' | 'fast_routing',
-  modelsPath: 'D:/Obsidian/Alex/Vault/llm/models',
+  modelsPath: './llm/models',
   llamaServerBinary: '',
   autoStartJevServer: true,
   autoStartPrimaryServer: false,
@@ -758,6 +780,14 @@ async function processRefineQueue() {
     if (currentRefineDryRun) {
       addLog('Vault Refinement DRY-RUN Complete (no files were modified).', 'success');
     } else {
+      if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
+        try {
+          const swept = await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+          if (swept.length > 0) {
+            addLog(`Pruned ${swept.length} empty folder(s) left after file moves.`, 'info');
+          }
+        } catch {}
+      }
       addLog(`Vault Refinement Complete. Backups saved to: 99_System/_refine_backup/${currentRefineSession?.sessionId || ''}`, 'success');
     }
     currentRefineSession = null;
@@ -870,16 +900,35 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
           'info'
         );
 
-        // Check if confidence is ambiguous -> enqueue into Triage
+        // Check if confidence is ambiguous -> enqueue into Triage with 3 distinct candidate folders
         if (routeResult.needsReview) {
           addLog(
             `[Jev Decision] Ambiguous confidence (${Math.round(routeResult.totalConfidence * 100)}% < ${Math.round(routerConfig.threshold * 100)}%). Queued for Triage Review.`,
             'warn'
           );
-          const distribution = [
-            { letter: 'A', option: routeResult.suggestedFolder, probability: routeResult.totalConfidence },
-            { letter: 'B', option: routeResult.level2Selection, probability: routeResult.level2Confidence }
-          ];
+          const candidateFolderSet = new Set<string>();
+          const addCandidate = (folderOrOpt: string) => {
+            const mapped = routerConfig.typeRoutes[folderOrOpt] || folderOrOpt;
+            if (mapped && mapped.trim()) candidateFolderSet.add(mapped.trim());
+          };
+          addCandidate(routeResult.suggestedFolder);
+          if (routeResult.level2Selection && routeResult.level2Selection !== routeResult.level1Category) {
+            addCandidate(routeResult.level2Selection);
+          }
+          for (const fallbackRoute of Object.values(routerConfig.typeRoutes)) {
+            if (candidateFolderSet.size >= 3) break;
+            addCandidate(fallbackRoute);
+          }
+          const distinctCandidates = Array.from(candidateFolderSet).slice(0, 3);
+          const distribution = distinctCandidates.map((opt, idx) => ({
+            letter: String.fromCharCode(65 + idx),
+            option: opt,
+            probability:
+              idx === 0
+                ? routeResult.totalConfidence
+                : Math.max(0.1, Math.round(((1 - routeResult.totalConfidence) / Math.max(1, distinctCandidates.length - 1)) * 100) / 100)
+          }));
+
           decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath);
           decisionTriageQueue.unshift({
             id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -923,6 +972,7 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
             if (options?.snapshot) {
               await options.snapshot.backup(filePath);
             }
+            const oldDir = path.dirname(filePath);
             parsedNote.data.ai_refined = true;
             (parsedNote.data as any).ai_content_type = routeResult.level1Category;
             if (routeResult.projectLink) {
@@ -937,6 +987,8 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
             await fsPromises.writeFile(filePath, finalFileContent, 'utf-8');
             if (path.resolve(filePath) !== path.resolve(destPath)) {
               await fsPromises.rename(filePath, destPath);
+              triageManager.syncRefinedFile(filePath, destPath, routeResult.suggestedFolder, originalFilename);
+              await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
             }
           }
           return;
@@ -953,18 +1005,24 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
     }
   }
 
-  // Degraded fallback mode without high-confidence decision model: pass truncated folder list when high-confidence guidance is unavailable
+  const projectsList = await loadProjectsRegistry(currentConfig.vaultPath);
+  const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+  const discoveredProjectsHint =
+    projectsList.length > 0
+      ? `\n   - Discovered Projects in this Vault: ${projectsList.map(p => `'${p.folder}' (aliases: ${p.aliases.slice(0, 3).join(', ')})`).join('; ')}.\n   - NEVER assign a note to any of these project folders unless that project is explicitly mentioned in the note!`
+      : `\n   - Place project notes in '${projectsRoot}/<ProjectName>' only if a specific project name is explicitly stated in the note.`;
+
+  // Degraded fallback mode without high-confidence decision model: pass balanced folder list across all vault roots
   let existingFoldersContext = '';
   if ((!decisionGuidance || (hierarchicalRouteResult && !hierarchicalRouteResult.isHighConfidence)) && currentVaultStructure.length > 0) {
-    const sampleFolders = currentVaultStructure.slice(0, 25);
-    existingFoldersContext = "\nEXISTING FOLDERS IN VAULT (Degraded fallback mode without Decision Model):\n- " + sampleFolders.join("\n- ");
-    if (currentVaultStructure.length > 25) {
-      existingFoldersContext += `\n- ... (${currentVaultStructure.length - 25} other folders)`;
-    }
+    const nonProjects = currentVaultStructure.filter(f => !f.toLowerCase().startsWith(projectsRoot.toLowerCase() + '/'));
+    const projectsSample = currentVaultStructure.filter(f => f.toLowerCase().startsWith(projectsRoot.toLowerCase() + '/')).slice(0, 10);
+    const sampleFolders = [...projectsSample, ...nonProjects.slice(0, 15)];
+    existingFoldersContext = "\nEXISTING FOLDERS IN VAULT (Discovered dynamically from connected Vault):\n- " + sampleFolders.join("\n- ");
   }
 
   // Static instructions placed first so llama-server reuses the KV-cache prefix across consecutive notes
-  const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using PARA (Projects, Areas, Resources/Knowledge, Archives).
+  const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using the connected vault's hierarchy.
 Carefully analyze the NOTE INFORMATION, EXISTING TAGS, and CONTENT to classify it with flawless precision.
 
 ### TITLE GUIDELINES & LANGUAGE RULES (STRICT):
@@ -973,43 +1031,39 @@ Carefully analyze the NOTE INFORMATION, EXISTING TAGS, and CONTENT to classify i
   * If the document text is in Russian -> the title MUST be in Russian. NEVER translate Russian notes to English!
   * If the document text is in English -> the title MUST be in English.
 - Remove noise prefixes, timestamps, dates, raw indices, and verbose clauses.
+- Preserve series numbers and uppercase project acronyms/identifiers.
 - If current filename is already clean and concise, keep it.
-- Example: "Межпланетный интернет 7 первых запросов в бесконечном интернете.md" -> "Межпланетный интернет"
 
 ### STRICT TAXONOMY & CLASSIFICATION RULES:
-1. SPECIFIC PROJECTS (HIGHEST PRIORITY):
-   - If the note belongs to a specific project (indicated by tags, title, or content: ArtMaze, CleanNet, Neuromicon, AGOS-LUNA, Crypto, 1149, Reality Game, CityTournament, etc.), it MUST go into its project folder:
-     * CleanNet -> '01_Projects/CleanNet Franchise'
-     * Neuromicon -> '01_Projects/Neuromicon' (or '01_Projects/Neuromicon/Songs', '01_Projects/Neuromicon/Poems')
-     * ArtMaze -> '01_Projects/ArtMaze'
-     * AGOS-LUNA -> '01_Projects/AGOS-LUNA'
-     * Specific named project -> '01_Projects/<ExactProjectName>'
-2. CODE, APIS, SCRIPTS VS. FICTION SCENARIOS (CRITICAL):
-   - "API for Projects", "Access Script ArtMaze", Python/JS code, tokens, configs, technical scripts -> place in '03_Knowledge/Programming' OR their specific project folder (e.g., '01_Projects/ArtMaze').
-   - NEVER put programming code, APIs, project plans, business roadmaps, or announcements into '01_Projects/Scenarios'!
-   - '01_Projects/Scenarios' is STRICTLY for fiction movie scripts, theater screenplays, or storytelling quest narratives.
-3. CONTENT-TYPE ROUTING (When not part of a specific project):
-   - Transcripts / Dialogues / Interviews -> '03_Knowledge/Dialogues'
-   - Essays / Deep articles / Philosophy -> '03_Knowledge/Essays'
+1. CONTENT-TYPE ROUTING (DEFAULT FOR GENERAL KNOWLEDGE):
+   - Technical specifications, system prompts, AI agents, APIs, code, configs -> '03_Knowledge/Technical'
+   - Meeting agendas, theses for meetings, transcripts, dialogues, interviews -> '03_Knowledge/Dialogues'
+   - Essays, philosophical reflections, analytical articles -> '03_Knowledge/Essays'
    - Poems / Verses -> '03_Knowledge/Poems'
    - Songs / Lyrics / Music tracks -> '03_Knowledge/Songs'
-   - Crypto / Blockchain general -> '03_Knowledge/Crypto'
+   - Fiction movie scripts, screenplays, quest narratives -> '03_Knowledge/Scripts'
+   - Raw ideas, product innovations, brainstorms -> '05_Ideas/Inbox'
    - Daily logs / Journal entries -> '04_Journal/Daily'
-   - Personal finance / Health -> '02_Areas/<AreaName>'
-4. FOLDER REUSE & CONSOLIDATION:
+   - Personal finance / Health / Operations -> '02_Areas/<AreaName>'
+2. SPECIFIC PROJECTS (ONLY WHEN EXPLICITLY MENTIONED IN TEXT OR TITLE):
+   - Place in '${projectsRoot}/<ExactProjectName>' ONLY if the note is an active project plan, roadmap, or explicitly names a specific project in its title or text!${discoveredProjectsHint}
+   - General project lists or roadmaps without a specific brand name -> '${projectsRoot}/Active'.
+3. FOLDER REUSE & CONSOLIDATION:
    - Avoid creating new near-duplicate folders. Match existing vault folders where possible.
-   - Max depth is 2-3 levels (e.g., '01_Projects/ProjectName' or '03_Knowledge/SubTopic').
+   - Max depth is 2-3 levels (e.g., '03_Knowledge/Essays' or '${projectsRoot}/ProjectName').
 ${existingFoldersContext}
 
-### TAGGING RULES & MANDATORY LANGUAGE TAG:
-- MANDATORY LANGUAGE TAG: You MUST include the language code tag as the FIRST tag in improved_tags:
-  * "ru" if the document text is in Russian
-  * "en" if the document text is in English
-  * "ph" if the document text is in Filipino / Tagalog
-  * Include both "ru" and "en" if the document is significantly bilingual
-- KEEP all valuable existing tags.
-- Generate 5 to 10 HIGHLY SPECIFIC topic tags based on the core semantic meaning (lowercase, without '#' in array).
-- Support English and Russian tags matching the language of the note.
+### ORTHOGONAL MULTI-LEVEL TAGGING RULES (L0-L7) & MANDATORY LANGUAGE TAG:
+- MANDATORY LANGUAGE TAG: Include the language code ("ru", "en", or "ph") in improved_tags.
+- DO NOT generate random flat words from the text! Instead, assign 4 to 7 structured ORTHOGONAL TAXONOMY tags that answer:
+  * L1 TYPE (what is it?): e.g. "type/project", "type/research", "type/whitepaper", "type/scenario", "type/idea", "type/task", "type/meeting", "type/concept", "type/protocol", "type/reference"
+  * L2 DOMAIN (what field?): e.g. "domain/AI", "domain/AI/agents", "domain/AI/LLM", "domain/semantics", "domain/hypergraph", "domain/knowledge-management", "domain/software", "domain/philosophy", "domain/film", "domain/transmedia", "domain/business", "domain/economy"
+  * L3 PROJECT / RESEARCH (if applicable): e.g. "project/<ProjectName>", "research/semantic-hypergraph", "research/JeV-response"
+  * L4 SYSTEM / CONCEPT (function): e.g. "system/agent-orchestration", "system/routing", "system/classification", "system/tagging"
+  * KNOWLEDGE AXIS (epistemic role): e.g. "knowledge/model", "knowledge/hypothesis", "knowledge/specification", "knowledge/decision", "knowledge/fact"
+  * L5 STATUS & L7 STAGE: e.g. "status/active", "status/idea", "status/research", "stage/design", "stage/implementation", "stage/validation"
+  * L6 PRIORITY (optional): "priority/P0", "priority/P1", "priority/P2", "priority/P3"
+- NEVER generate random alphanumeric codes like "#01G23" or numbers.
 ${decisionGuidance}
 
 ### NOTE INFORMATION:
@@ -1022,8 +1076,8 @@ ${textToProcess}
 Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
 {
   "improved_title": "Clean Human Title (2-5 words)",
-  "improved_tags": ["ru", "tag1", "tag2", "tag3", "tag4", "tag5"],
-  "suggested_path": "01_Projects/ExactFolderName"
+  "improved_tags": ["ru", "type/research", "domain/AI", "status/active"],
+  "suggested_path": "03_Knowledge/Essays"
 }`;
 
   const timeoutMs = (currentConfig.timeoutSeconds || 240) * 1000;
@@ -1061,7 +1115,8 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   }
 
   const newTags = Array.isArray(data.improved_tags) ? data.improved_tags : [];
-  const parsedNewTags = newTags.map((t: string) => String(t).trim().replace(/^#+/, '').replace(/\s+/g, '-')).filter(Boolean);
+  // Strictly sanitize LLM-generated tags to reject any non-word codes like #01G23
+  const parsedNewTags = sanitizeTagList(newTags, { allowSingleLetter: false });
   
   // Enforce language tags (e.g. #ru, #en, #ph)
   const tagsWithLanguage = ensureLanguageTags(parsedNewTags, body, originalFilename);
@@ -1071,13 +1126,15 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
     parsedNote.data.project = hierarchicalRouteResult.projectLink;
   }
 
-  // Determine refined filename (Smart Renaming)
+  // Determine refined filename (Smart Renaming with identifier & series protection)
   let targetFilename = originalFilename;
   const smartRenameEnabled = options?.smartRename !== false;
   if (smartRenameEnabled && data.improved_title) {
     let cleanTitle = sanitizeTitle(data.improved_title, originalFilename);
     // Enforce title language strictly matches document content language
     cleanTitle = enforceTitleLanguage(cleanTitle, body, originalFilename);
+    // Protect series numbers and explicit project acronyms
+    cleanTitle = preserveMeaningfulTitle(cleanTitle, originalFilename);
     if (cleanTitle && cleanTitle !== 'Untitled_Document') {
       targetFilename = `${cleanTitle}.md`;
       parsedNote.data.title = cleanTitle;
@@ -1087,14 +1144,17 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   const combinedTags = (parsedNote.data.tags as string[]) || [];
   const finalFileContent = serializeNote(parsedNote.data, parsedNote.body);
 
-  let suggestedPath = (data.suggested_path || '03_Knowledge/Unsorted').trim();
-  if (
-    hierarchicalRouteResult &&
-    (hierarchicalRouteResult.isHighConfidence ||
-      (hierarchicalRouteResult.projectLink && hierarchicalRouteResult.level1Confidence >= 0.75))
-  ) {
-    suggestedPath = hierarchicalRouteResult.suggestedFolder;
-  }
+  let suggestedPath = validateAndSanitizeRoute({
+    llmSuggestedPath: data.suggested_path || '03_Knowledge/Unsorted',
+    originalFilename,
+    noteTitle: String(parsedNote.data.title || targetFilename.replace(/\.md$/i, '')),
+    noteBody: body,
+    existingTags: combinedTags,
+    projects: projectsList,
+    jevResult: hierarchicalRouteResult,
+    typeRoutes: currentConfig.typeRoutes,
+    projectsRoot
+  });
   
   // Clean up path separators and extensions
   suggestedPath = suggestedPath.replace(/\\/g, '/').replace(/^\/+/g, '').replace(/\/+$/g, '');
@@ -1126,6 +1186,7 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
     throw new Error(`Security Error: Target folder "${suggestedPath}" is outside vault.`);
   }
   const destMdPath = path.join(destDir, targetFilename);
+  const oldDir = path.dirname(filePath);
 
   // Write content to current file first
   await fsPromises.mkdir(destDir, { recursive: true });
@@ -1148,14 +1209,14 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
           const baseContent = await fsPromises.readFile(baseCandidate, 'utf-8');
           const normBase = getNormalizedBody(baseContent);
           if (normBase && (normBase === normCurrent || computeWordSimilarity(normBase, normCurrent) >= 80)) {
-            // Backup base candidate before modifying
             if (options?.snapshot) {
               await options.snapshot.backup(baseCandidate);
             }
-            // Merge any extra tags into canonical base note
             const mergedContent = mergeTagsIntoFrontmatter(baseContent, combinedTags);
             await fsPromises.writeFile(baseCandidate, mergedContent, 'utf-8');
             await safeArchiveDuplicate(filePath, baseCandidate);
+            triageManager.syncRefinedFile(filePath, baseCandidate, suggestedPath, baseFilename);
+            await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
             addLog(`Deduplicated: "${originalFilename}" merged into canonical "${baseFilename}". Removed duplicate copy.`, 'success');
             return;
           }
@@ -1170,13 +1231,14 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
       const destContent = await fsPromises.readFile(destMdPath, 'utf-8');
       const normDest = getNormalizedBody(destContent);
       if (normDest && (normDest === normCurrent || computeWordSimilarity(normDest, normCurrent) >= 80)) {
-        // Backup dest before modifying
         if (options?.snapshot) {
           await options.snapshot.backup(destMdPath);
         }
         const mergedContent = mergeTagsIntoFrontmatter(destContent, combinedTags);
         await fsPromises.writeFile(destMdPath, mergedContent, 'utf-8');
         await safeArchiveDuplicate(filePath, destMdPath);
+        triageManager.syncRefinedFile(filePath, destMdPath, suggestedPath, targetFilename);
+        await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
         addLog(`Deduplicated: Target "${suggestedPath}/${targetFilename}" already exists with identical content. Merged tags and removed duplicate.`, 'success');
         return;
       }
@@ -1202,6 +1264,8 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
     }
     
     await fsPromises.rename(filePath, finalDestPath);
+    triageManager.syncRefinedFile(filePath, finalDestPath, suggestedPath, finalFilename);
+    await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
     if (originalFilename !== finalFilename) {
       addLog(`Refined & Renamed: "${originalFilename}" → "${suggestedPath}/${finalFilename}" (${tagsStr})`, 'success');
     } else {
@@ -1412,10 +1476,29 @@ export async function processFile(filePath: string) {
 
         const currentRelPath = path.relative(currentConfig.vaultPath, path.dirname(filePath)).replace(/\\/g, '/');
         if (routeResult.needsReview) {
-          const distribution = [
-            { letter: 'A', option: routeResult.suggestedFolder, probability: routeResult.totalConfidence },
-            { letter: 'B', option: routeResult.level2Selection, probability: routeResult.level2Confidence }
-          ];
+          const candidateFolderSet = new Set<string>();
+          const addCandidate = (folderOrOpt: string) => {
+            const mapped = routerConfig.typeRoutes[folderOrOpt] || folderOrOpt;
+            if (mapped && mapped.trim()) candidateFolderSet.add(mapped.trim());
+          };
+          addCandidate(routeResult.suggestedFolder);
+          if (routeResult.level2Selection && routeResult.level2Selection !== routeResult.level1Category) {
+            addCandidate(routeResult.level2Selection);
+          }
+          for (const fallbackRoute of Object.values(routerConfig.typeRoutes)) {
+            if (candidateFolderSet.size >= 3) break;
+            addCandidate(fallbackRoute);
+          }
+          const distinctCandidates = Array.from(candidateFolderSet).slice(0, 3);
+          const distribution = distinctCandidates.map((opt, idx) => ({
+            letter: String.fromCharCode(65 + idx),
+            option: opt,
+            probability:
+              idx === 0
+                ? routeResult.totalConfidence
+                : Math.max(0.1, Math.round(((1 - routeResult.totalConfidence) / Math.max(1, distinctCandidates.length - 1)) * 100) / 100)
+          }));
+
           decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath);
           decisionTriageQueue.unshift({
             id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1492,12 +1575,19 @@ export async function processFile(filePath: string) {
 
   addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
 
+  const inboxProjectsList = await loadProjectsRegistry(currentConfig.vaultPath);
+  const inboxProjectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+  const inboxProjectsPromptLines =
+    inboxProjectsList.length > 0
+      ? inboxProjectsList.map(p => `     * ${p.aliases[0] || p.id} -> '${p.folder}'`).join('\n')
+      : `     * Named projects -> '${inboxProjectsRoot}/<ExactProjectName>'`;
+
   // Degraded fallback mode without decision model: only pass folder list when decisionGuidance is empty
   const existingFoldersContext = !decisionGuidance && currentVaultStructure.length > 0 
-    ? "\nEXISTING FOLDERS IN VAULT (Degraded fallback mode without Decision Model):\n- " + currentVaultStructure.slice(0, 30).join("\n- ") 
+    ? "\nEXISTING FOLDERS IN VAULT (Discovered dynamically from connected Vault):\n- " + currentVaultStructure.slice(0, 30).join("\n- ") 
     : "";
 
-  const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using PARA (Projects, Areas, Resources/Knowledge, Archives).
+  const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using the connected vault's hierarchy.
 Analyze this new incoming file from the Inbox and classify it with flawless precision.
 DO NOT output any markdown, explanations, or backticks. Return ONLY raw JSON.
 ${decisionGuidance}
@@ -1515,22 +1605,15 @@ ${textToProcess}
   * If the document text is in English -> the title MUST be in English.
 - Do NOT simply repeat lengthy, clumsy filenames or voice recording artifacts.
 - Remove dates, timestamps, voice recorder prefixes, and excessive subtitles.
-  * Example: "Межпланетный интернет 7 первых запросов в бесконечном интернете.md" -> "Межпланетный интернет" (Keep Russian!)
-  * Example: "Заметка 2024-03-01 о настройке NGINX и SSL" -> "Настройка NGINX и SSL"
-  * Example: "voice_note_14_clean_net_franchise_ideas" -> "CleanNet Франшиза Идеи"
 
 ### STRICT TAXONOMY & CLASSIFICATION RULES:
-1. SPECIFIC PROJECTS (HIGHEST PRIORITY):
-   - Notes belonging to a specific project (by title, tags, or content: ArtMaze, CleanNet, Neuromicon, AGOS-LUNA, Crypto, 1149, Reality Game, CityTournament, etc.) MUST go to their project folder:
-     * CleanNet -> '01_Projects/CleanNet Franchise'
-     * Neuromicon -> '01_Projects/Neuromicon' (or '01_Projects/Neuromicon/Songs', '01_Projects/Neuromicon/Poems')
-     * ArtMaze -> '01_Projects/ArtMaze'
-     * AGOS-LUNA -> '01_Projects/AGOS-LUNA'
-     * Other named projects -> '01_Projects/<ExactProjectName>'
+1. SPECIFIC PROJECTS (ONLY WHEN EXPLICITLY MENTIONED):
+   - Notes belonging to a specific project discovered in this vault MUST go to their project folder ONLY if that project is explicitly mentioned in the note:
+${inboxProjectsPromptLines}
 2. CODE, APIS, SCRIPTS VS. FICTION SCENARIOS (CRITICAL):
-   - Programming code, APIs, IT scripts, configs -> '03_Knowledge/Programming' OR specific '01_Projects/<Name>'.
-   - NEVER put programming code, APIs, project plans, business roadmaps, or announcements in '01_Projects/Scenarios'!
-   - '01_Projects/Scenarios' is STRICTLY for fiction movie scripts, theater screenplays, or storytelling quest narratives.
+   - Programming code, APIs, IT scripts, configs -> '03_Knowledge/Technical' OR specific '${inboxProjectsRoot}/<Name>'.
+   - NEVER put programming code, APIs, project plans, business roadmaps, or announcements in '${inboxProjectsRoot}/Scenarios'!
+   - '${inboxProjectsRoot}/Scenarios' or '03_Knowledge/Scripts' is STRICTLY for fiction movie scripts, theater screenplays, or storytelling quest narratives.
 3. CONTENT-TYPES & TOPICS:
    - Transcripts / Dialogues / Interviews -> '03_Knowledge/Dialogues'
    - Essays / Deep articles / Philosophy -> '03_Knowledge/Essays'
@@ -1548,13 +1631,14 @@ ${existingFoldersContext}
   * "en" if the document is in English
   * "ph" if the document is in Filipino / Tagalog
   * Include both "ru" and "en" if the document is significantly bilingual
+- ONLY use real human words or hyphenated word phrases for tags! NEVER generate alphanumeric codes like "#01G23", numbers, or IDs.
 
 Extract these exactly 5 fields in valid JSON format:
 {
   "title": "Concise Distilled Title (2-5 words)",
   "summary": "1-2 sentence concise summary",
-  "category": "01_Projects/ExactFolderName",
-  "tags": ["ru", "tag1", "tag2", "tag3", "tag4"],
+  "category": "${inboxProjectsRoot}/ExactFolderName",
+  "tags": ["ru", "word-tag", "topic-tag"],
   "related_concepts": ["Concept 1", "Concept 2", "Concept 3"]
 }`;
 
@@ -1622,13 +1706,17 @@ Extract these exactly 5 fields in valid JSON format:
   else if (rawCategory === 'Journal') destFolder = path.join('04_Journal', 'Daily');
   else if (rawCategory === 'Ideas') destFolder = path.join('05_Ideas', 'Inbox');
   
-  if (
-    inboxRouteResult &&
-    (inboxRouteResult.isHighConfidence ||
-      (inboxRouteResult.projectLink && inboxRouteResult.level1Confidence >= 0.75))
-  ) {
-    destFolder = inboxRouteResult.suggestedFolder;
-  }
+  destFolder = validateAndSanitizeRoute({
+    llmSuggestedPath: destFolder,
+    originalFilename,
+    noteTitle: data.title || originalFilename,
+    noteBody: fullConvertedText,
+    existingTags: detectedTags,
+    projects: inboxProjectsList,
+    jevResult: inboxRouteResult,
+    typeRoutes: currentConfig.typeRoutes,
+    projectsRoot: inboxProjectsRoot
+  });
 
   // Dynamically register folder
   if (!currentVaultStructure.includes(destFolder)) {
@@ -1640,6 +1728,7 @@ Extract these exactly 5 fields in valid JSON format:
   let safeTitle = sanitizeTitle(data.title, originalFilename);
   // Enforce title language strictly matches document content language
   safeTitle = enforceTitleLanguage(safeTitle, fullConvertedText, originalFilename);
+  safeTitle = preserveMeaningfulTitle(safeTitle, originalFilename);
   let mdFilename = `${safeTitle}.md`;
   
   const formatArray = (arr: any) => {
@@ -1649,11 +1738,11 @@ Extract these exactly 5 fields in valid JSON format:
     return [];
   };
 
-  const rawTags = formatArray(data.tags).map((t: string) => String(t).trim().replace(/^#/, '').replace(/\s+/g, '-')).filter(Boolean);
+  const rawTags = sanitizeTagList(formatArray(data.tags), { allowSingleLetter: false });
   
   // Merge detected tags + LLM tags
   const tagMap = new Map<string, string>();
-  for (const t of detectedTags) {
+  for (const t of sanitizeTagList(detectedTags, { allowSingleLetter: false })) {
     tagMap.set(t.toLowerCase(), t);
   }
   for (const t of rawTags) {
@@ -2570,6 +2659,9 @@ app.post('/api/duplicates/clean', async (req, res) => {
     }
 
     await fsPromises.writeFile(path.join(trashSubdir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    try {
+      await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+    } catch {}
 
     addLog(`Safely cleaned ${removedCount} duplicate notes. Reclaimed ${(reclaimedBytes / 1024).toFixed(1)} KB. Backed up to 99_System/_duplicates_trash.`, 'success');
 
@@ -2760,13 +2852,164 @@ app.post('/api/decision/test', async (req, res) => {
   }
 });
 
-app.get('/api/decision/triage', (req, res) => {
+app.get('/api/vault/structure', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.json({ folders: [], projectsRoot: '01_Projects', projects: [], existingTags: [] });
+  }
+  try {
+    const structure = await discoverVaultStructure(currentConfig.vaultPath);
+    res.json(structure);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/prune-empty', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  try {
+    const removed = await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+    const relativeRemoved = removed.map(r => path.relative(currentConfig.vaultPath, r).replace(/\\/g, '/'));
+    if (relativeRemoved.length > 0) {
+      addLog(`[Empty Folder Cleanup] Removed ${relativeRemoved.length} empty folder(s): ${relativeRemoved.join(', ')}`, 'success');
+    } else {
+      addLog('[Empty Folder Cleanup] Checked vault — no empty folders found.', 'info');
+    }
+    res.json({ success: true, prunedCount: relativeRemoved.length, removedFolders: relativeRemoved });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Helper that re-evaluates a note and proposes a smart alternative folder from the connected Vault
+ * when the user clicks "NO" on Triage suggestions (or when auto-resolving).
+ */
+async function rethinkTriageAlternativeForNote(
+  item: { filePath: string; filename: string; relativePath: string },
+  rejectedFolders: string[],
+  rejectedOptions: string[]
+): Promise<{ option: string; folder: string; reason?: string } | null> {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) return null;
+
+  const rejectedLower = new Set(
+    [...rejectedFolders, ...rejectedOptions].map(s => (s || '').toLowerCase().replace(/\\/g, '/').trim())
+  );
+
+  const structure = await discoverVaultStructure(currentConfig.vaultPath);
+  const routerConfig = await buildRouterConfig(currentConfig);
+
+  // Collect all candidate folders from the vault's discovered projects, typeRoutes, and actual disk folders
+  const allCandidates = new Set<string>();
+  for (const proj of structure.projects) {
+    if (proj.folder) allCandidates.add(proj.folder);
+  }
+  for (const route of Object.values(routerConfig.typeRoutes)) {
+    if (route) allCandidates.add(route);
+  }
+  for (const folder of structure.folders) {
+    if (folder && !folder.startsWith('00_') && !folder.startsWith('99_')) {
+      allCandidates.add(folder);
+    }
+  }
+  allCandidates.add(`${structure.projectsRoot}/Active`);
+
+  const availableFolders = Array.from(allCandidates).filter(
+    f => !rejectedLower.has(f.toLowerCase().replace(/\\/g, '/').trim())
+  );
+  if (availableFolders.length === 0) return null;
+
+  let bodyText = '';
+  let noteTitle = item.filename.replace(/\.md$/i, '');
+  let existingTags: string[] = [];
+  if (item.filePath && fs.existsSync(item.filePath)) {
+    try {
+      const raw = await fsPromises.readFile(item.filePath, 'utf-8');
+      const parsed = parseNote(raw);
+      bodyText = parsed.body || '';
+      if (parsed.data.title) noteTitle = String(parsed.data.title);
+      if (Array.isArray(parsed.data.tags)) existingTags = parsed.data.tags.map(String);
+    } catch {}
+  }
+
+  // 1. Check deterministic semantic route first if not already rejected
+  const deterministicRoute = validateAndSanitizeRoute({
+    llmSuggestedPath: '',
+    originalFilename: item.filename,
+    noteTitle,
+    noteBody: bodyText,
+    existingTags,
+    projects: structure.projects,
+    typeRoutes: routerConfig.typeRoutes,
+    projectsRoot: structure.projectsRoot
+  });
+  if (
+    deterministicRoute &&
+    !rejectedLower.has(deterministicRoute.toLowerCase().replace(/\\/g, '/').trim())
+  ) {
+    return {
+      option: deterministicRoute,
+      folder: deterministicRoute,
+      reason: `Semantic analysis of "${noteTitle}" suggests`
+    };
+  }
+
+  // 2. If Jev Decision Server is online, ask it to choose among the remaining available vault folders
+  if (currentConfig.decisionModelUrl && availableFolders.length >= 2) {
+    try {
+      const isOnline = await isDecisionServerReachable(currentConfig.decisionModelUrl, 1200);
+      if (isOnline) {
+        const snippet = safeSlice(bodyText, 0, 1200);
+        const state = `Filename: ${item.filename}\nTitle: ${noteTitle}\nRejected folders: ${rejectedFolders.join(', ')}\nContent:\n${snippet}`;
+        const choice = await chooseOne(
+          state,
+          'The previous folder was rejected. Which remaining vault folder best fits this document?',
+          availableFolders.slice(0, 15),
+          { decisionModelUrl: currentConfig.decisionModelUrl, timeoutMs: 8000 }
+        );
+        if (choice && choice.chosen && choice.chosen.option) {
+          return {
+            option: choice.chosen.option,
+            folder: choice.chosen.option,
+            reason: `AI re-evaluated (${Math.round(choice.confidence * 100)}% conf)`
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Fallback to best keyword/project match among remaining availableFolders
+  const fallbackFolder = availableFolders[0];
+  return {
+    option: fallbackFolder,
+    folder: fallbackFolder,
+    reason: 'Next best matching vault folder'
+  };
+}
+
+app.get('/api/decision/triage', async (req, res) => {
   const queue = triageManager.getQueue();
+  let vaultFolders: string[] = [];
+  if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
+    try {
+      const struct = await discoverVaultStructure(currentConfig.vaultPath);
+      const routerCfg = await buildRouterConfig(currentConfig);
+      vaultFolders = Array.from(
+        new Set([
+          ...struct.projects.map(p => p.folder),
+          ...Object.values(routerCfg.typeRoutes),
+          ...struct.folders
+        ])
+      ).sort();
+    } catch {}
+  }
   res.json({
     items: queue,
     triageQueue: queue,
     count: triageManager.getPendingCount(),
-    threshold: currentConfig.decisionConfidenceThreshold || 0.80
+    threshold: currentConfig.decisionConfidenceThreshold || 0.80,
+    vaultFolders
   });
 });
 
@@ -2781,13 +3024,66 @@ app.post('/api/decision/triage/answer', async (req, res) => {
   }
 
   try {
-    const outcome = await triageManager.answerQuestion(id, questionIndex, answer, currentConfig.vaultPath);
+    const outcome = await triageManager.answerQuestion(
+      id,
+      questionIndex,
+      answer,
+      currentConfig.vaultPath,
+      {
+        rethinkAlternative: async (item, rejectedFolders, rejectedOptions) => {
+          return await rethinkTriageAlternativeForNote(item, rejectedFolders, rejectedOptions);
+        }
+      }
+    );
     if (outcome.resolved) {
       addLog(`[Triage Answered YES] Note "${id}" moved to "${outcome.targetFolder}" with snapshot backup`, 'success');
+    } else if (outcome.rethought && outcome.nextQuestion) {
+      addLog(`[Triage AI Rethink] Proposed new alternative for "${id}": "${outcome.nextQuestion.targetFolder}"`, 'info');
     } else if (outcome.status === 'manual') {
-      addLog(`[Triage Answered NO] All candidate questions exhausted for "${id}". Marked for manual review.`, 'warn');
+      addLog(`[Triage Answered NO] All candidate questions exhausted for "${id}". Marked for manual selection.`, 'warn');
     }
     res.json(outcome);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/decision/triage/auto-resolve', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+
+  const { id } = req.body || {};
+  try {
+    const queue = triageManager.getQueue();
+    const targets = id
+      ? queue.filter(i => i.id === id && i.status !== 'resolved')
+      : queue.filter(i => i.status !== 'resolved');
+
+    let resolvedCount = 0;
+    const results: Array<{ id: string; filename: string; targetFolder: string }> = [];
+
+    for (const item of targets) {
+      const rejectedFolders = item.questions.filter(q => q.answered === 'no').map(q => q.targetFolder);
+      const rejectedOptions = item.questions.filter(q => q.answered === 'no').map(q => q.targetOption);
+
+      const alt = await rethinkTriageAlternativeForNote(item, rejectedFolders, rejectedOptions);
+      const bestFolder =
+        alt?.folder ||
+        item.questions[item.currentQuestionIndex]?.targetFolder ||
+        item.questions[0]?.targetFolder ||
+        '03_Knowledge/Essays';
+
+      const resItem = await triageManager.resolveToFolder(item.id, bestFolder, currentConfig.vaultPath);
+      if (resItem.resolved) {
+        resolvedCount++;
+        results.push({ id: item.id, filename: item.filename, targetFolder: resItem.targetFolder });
+        addLog(`[Triage Auto-Resolved] "${item.filename}" → "${resItem.targetFolder}"`, 'success');
+      }
+    }
+
+    await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+    res.json({ success: true, resolvedCount, results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -2822,6 +3118,7 @@ app.post('/api/decision/triage/resolve', async (req, res) => {
     return res.status(404).json({ error: 'File not found on disk' });
   }
 
+  const oldDir = path.dirname(fullPath);
   const snapshot = await createSnapshotSession(currentConfig.vaultPath, 'triage_manual_resolve');
   await snapshot.backup(fullPath);
 
@@ -2832,6 +3129,7 @@ app.post('/api/decision/triage/resolve', async (req, res) => {
   const content = await fsPromises.readFile(fullPath, 'utf-8');
   const parsed = parseNote(content);
   parsed.data.ai_refined = true;
+  parsed.data.category = cleanTargetFolder;
   if (applyTag) {
     mergeTags(parsed.data, [applyTag]);
   }
@@ -2841,10 +3139,18 @@ app.post('/api/decision/triage/resolve', async (req, res) => {
   await fsPromises.writeFile(fullPath, updatedContent, 'utf-8');
   if (fullPath !== destPath) {
     await fsPromises.rename(fullPath, destPath);
+    await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
     addLog(`[Triage Resolved] Moved "${filename}" -> "${cleanTargetFolder}"`, 'success');
   }
 
-  decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath);
+  for (const qItem of triageManager.getQueue()) {
+    if (qItem.filePath === fullPath || qItem.filePath === filePath || qItem.filename === filename) {
+      qItem.status = 'resolved';
+      qItem.resolvedFolder = cleanTargetFolder;
+      qItem.filePath = destPath;
+    }
+  }
+  decisionTriageQueue = decisionTriageQueue.filter(q => q.filePath !== filePath && q.filePath !== fullPath);
   res.json({ success: true, message: `Moved to ${cleanTargetFolder}` });
 });
 
@@ -2924,14 +3230,39 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
           const destDir = path.join(currentConfig.vaultPath, routeResult.suggestedFolder);
           await fsPromises.mkdir(destDir, { recursive: true });
           const destPath = path.join(destDir, filename);
+          const oldDir = path.dirname(filePath);
           await fsPromises.writeFile(filePath, serialized, 'utf-8');
           if (path.resolve(filePath) !== path.resolve(destPath)) {
             await fsPromises.rename(filePath, destPath);
+            triageManager.syncRefinedFile(filePath, destPath, routeResult.suggestedFolder, filename);
+            await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
           }
         }
         routedCount++;
       } else {
         triagedCount++;
+        const candidateFolderSet = new Set<string>();
+        const addCandidate = (folderOrOpt: string) => {
+          const mapped = routerConfig.typeRoutes[folderOrOpt] || folderOrOpt;
+          if (mapped && mapped.trim()) candidateFolderSet.add(mapped.trim());
+        };
+        addCandidate(routeResult.suggestedFolder);
+        if (routeResult.level2Selection && routeResult.level2Selection !== routeResult.level1Category) {
+          addCandidate(routeResult.level2Selection);
+        }
+        for (const fallbackRoute of Object.values(routerConfig.typeRoutes)) {
+          if (candidateFolderSet.size >= 3) break;
+          addCandidate(fallbackRoute);
+        }
+        const distinctCandidates = Array.from(candidateFolderSet).slice(0, 3);
+        const distribution = distinctCandidates.map((opt, idx) => ({
+          letter: String.fromCharCode(65 + idx),
+          option: opt,
+          probability:
+            idx === 0
+              ? routeResult.totalConfidence
+              : Math.max(0.1, Math.round(((1 - routeResult.totalConfidence) / Math.max(1, distinctCandidates.length - 1)) * 100) / 100)
+        }));
         triageManager.enqueue({
           filePath,
           relativePath: relPath,
@@ -2939,10 +3270,7 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
           contentType: routeResult.level1Category,
           confidence: routeResult.totalConfidence,
           topFolder: routeResult.suggestedFolder,
-          distribution: [
-            { letter: 'A', option: routeResult.suggestedFolder, probability: routeResult.totalConfidence },
-            { letter: 'B', option: routeResult.level2Selection, probability: routeResult.level2Confidence }
-          ]
+          distribution
         }, routerConfig.typeRoutes);
       }
 
@@ -2957,6 +3285,12 @@ app.post(['/api/decision/batch-triage', '/api/decision/fast-route-vault'], async
     } catch (err: any) {
       addLog(`Hierarchical triage failed on ${path.basename(filePath)}: ${err.message}`, 'warn');
     }
+  }
+
+  if (shouldMove) {
+    try {
+      await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+    } catch {}
   }
 
   addLog(`Hierarchical Jev Triage finished: ${processedCount} evaluated, ${routedCount} auto-routed (${Math.round(threshold * 100)}%+ conf), ${triagedCount} queued for review.`, 'success');
@@ -3249,7 +3583,10 @@ app.get('/api/vault/notes', async (req, res) => {
             const content = await fsPromises.readFile(full, 'utf-8');
             const parsed = parseNote(content);
             const title = (parsed.data.title as string) || ent.name.replace(/\.md$/i, '');
-            const rawTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+            const rawTags = sanitizeTagList(
+              Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [],
+              { allowSingleLetter: true }
+            );
             const category = (parsed.data.category as string) || (path.dirname(rel) === '.' ? 'Root' : path.dirname(rel));
             const lang = detectDocumentLanguage(parsed.body, ent.name);
             const ghost = checkGhostNote(parsed.body);
@@ -3374,10 +3711,345 @@ app.post('/api/vault/note/save', async (req, res) => {
   }
 
   try {
-    const updatedContent = serializeNote(frontmatter || {}, body || '');
+    const cleanFm = { ...(frontmatter || {}) };
+    if (Array.isArray(cleanFm.tags)) {
+      cleanFm.tags = sanitizeTagList(cleanFm.tags.map(String), { allowSingleLetter: true });
+    }
+    const updatedContent = serializeNote(cleanFm, body || '');
     await fsPromises.writeFile(fullPath, updatedContent, 'utf-8');
     addLog(`[Note Saved] Updated "${relPath}"`, 'success');
     res.json({ success: true, relativePath: relPath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/note/create', async (req, res) => {
+  if (!currentConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });
+  const { title, folder, tags, body } = req.body || {};
+  const cleanTitle = String(title || 'Новая заметка')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .trim();
+  const targetFolder = String(folder || '01_Projects/Active')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+
+  const targetDir = targetFolder
+    ? path.join(currentConfig.vaultPath, targetFolder)
+    : currentConfig.vaultPath;
+  const fullPath = path.join(targetDir, `${cleanTitle}.md`);
+
+  if (!isPathInsideVault(fullPath, currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'File path outside vault' });
+  }
+
+  try {
+    await fsPromises.mkdir(targetDir, { recursive: true });
+    const rawTags = sanitizeTagList(
+      Array.isArray(tags)
+        ? tags.map(String)
+        : typeof tags === 'string'
+        ? tags.split(',').map(s => s.trim().replace(/^#+/, '')).filter(Boolean)
+        : [],
+      { allowSingleLetter: false }
+    );
+    const bodyText = String(body || `# ${cleanTitle}\n\n`);
+    const tagsWithLang = ensureLanguageTags(rawTags, bodyText, `${cleanTitle}.md`);
+
+    const content = serializeNote(
+      {
+        title: cleanTitle,
+        category: targetFolder || 'Root',
+        tags: tagsWithLang,
+        created_at: new Date().toISOString().slice(0, 10),
+        ai_refined: true
+      },
+      bodyText
+    );
+    await fsPromises.writeFile(fullPath, content, 'utf-8');
+    const relCreated = path.relative(currentConfig.vaultPath, fullPath).replace(/\\/g, '/');
+    addLog(`[Note Created] Created "${relCreated}"`, 'success');
+    res.json({ success: true, relativePath: relCreated, title: cleanTitle });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/tags/taxonomy', async (req, res) => {
+  try {
+    const projects = currentConfig.vaultPath
+      ? await loadProjectsRegistry(currentConfig.vaultPath)
+      : [];
+    const axes = await loadVaultTagTaxonomy(currentConfig.vaultPath, projects);
+    res.json({ axes });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tags/taxonomy', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  const { action, axisId, tag } = req.body || {};
+  if (!axisId || !tag || !['add', 'remove'].includes(action)) {
+    return res.status(400).json({ error: 'axisId, tag, and action ("add"|"remove") are required' });
+  }
+
+  try {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const axes = await loadVaultTagTaxonomy(currentConfig.vaultPath, projects);
+    const targetAxis = axes.find(a => a.id === axisId);
+    if (!targetAxis) {
+      return res.status(404).json({ error: `Taxonomy axis "${axisId}" not found` });
+    }
+
+    const cleanTag = String(tag).trim().replace(/^#+/, '').trim();
+    if (action === 'add') {
+      const formatted =
+        targetAxis.prefix && !cleanTag.includes('/')
+          ? `${targetAxis.prefix}${cleanTag}`
+          : cleanTag;
+      if (!targetAxis.tags.some(t => t.toLowerCase() === formatted.toLowerCase())) {
+        targetAxis.tags.push(formatted);
+      }
+      addLog(`[Tag Taxonomy] Added tag "#${formatted}" to ${targetAxis.label}`, 'success');
+    } else {
+      targetAxis.tags = targetAxis.tags.filter(t => t.toLowerCase() !== cleanTag.toLowerCase());
+      addLog(`[Tag Taxonomy] Removed tag "#${cleanTag}" from ${targetAxis.label}`, 'info');
+    }
+
+    await saveVaultTagTaxonomy(currentConfig.vaultPath, axes);
+    res.json({ success: true, axes });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/note/tags', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  const { path: relPath, action, tag, tags } = req.body || {};
+  if (!relPath || !['add', 'remove', 'redefine', 'set'].includes(action)) {
+    return res.status(400).json({ error: 'path and valid action ("add"|"remove"|"redefine"|"set") required' });
+  }
+
+  const fullPath = path.join(currentConfig.vaultPath, relPath);
+  if (!isPathInsideVault(fullPath, currentConfig.vaultPath, false) || !fs.existsSync(fullPath)) {
+    return res.status(404).json({ error: 'Note not found inside vault' });
+  }
+
+  try {
+    const rawContent = await fsPromises.readFile(fullPath, 'utf-8');
+    const parsed = parseNote(rawContent);
+    const currentTags = sanitizeTagList(
+      Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [],
+      { allowSingleLetter: false }
+    );
+
+    let updatedTags: string[] = [...currentTags];
+    if (action === 'add' && tag) {
+      const clean = String(tag).trim().replace(/^#+/, '').trim();
+      updatedTags = sanitizeTagList([...currentTags, clean], { allowSingleLetter: false });
+    } else if (action === 'remove' && tag) {
+      const cleanLower = String(tag).trim().replace(/^#+/, '').trim().toLowerCase();
+      updatedTags = currentTags.filter(t => t.toLowerCase() !== cleanLower);
+    } else if (action === 'set' && Array.isArray(tags)) {
+      updatedTags = sanitizeTagList(tags.map(String), { allowSingleLetter: false });
+    } else if (action === 'redefine') {
+      const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+      const folderRel = path.dirname(relPath).replace(/\\/g, '/');
+      updatedTags = curateOrthogonalTags({
+        rawTags: currentTags,
+        title: String(parsed.data.title || path.basename(fullPath, '.md')),
+        filename: path.basename(fullPath),
+        body: parsed.body,
+        folder: folderRel === '.' ? '' : folderRel,
+        discoveredProjects: projects,
+        replaceExisting: true,
+        maxTags: 9
+      });
+      updatedTags = ensureLanguageTags(updatedTags, parsed.body, path.basename(fullPath));
+    }
+
+    parsed.data.tags = updatedTags;
+    const serialized = serializeNote(parsed.data, parsed.body);
+    await fsPromises.writeFile(fullPath, serialized, 'utf-8');
+    addLog(`[Note Tags] (${action}) on "${relPath}" -> [${updatedTags.join(', ')}]`, 'success');
+    res.json({ success: true, path: relPath, tags: updatedTags });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/tags/reclassify-all', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+
+  try {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const allFiles = await getFilesRecursively(currentConfig.vaultPath, [], true, false);
+    const snapshot = createSnapshotSession(currentConfig.vaultPath, 'orthogonal_tag_reclassify');
+    let updatedCount = 0;
+
+    for (const filePath of allFiles) {
+      try {
+        const content = await fsPromises.readFile(filePath, 'utf-8');
+        const parsed = parseNote(content);
+        if (!parsed.body.trim()) continue;
+
+        await snapshot.backup(filePath);
+        const rel = path.relative(currentConfig.vaultPath, filePath).replace(/\\/g, '/');
+        const folderRel = path.dirname(rel).replace(/\\/g, '/');
+        const currentTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+
+        const curated = curateOrthogonalTags({
+          rawTags: currentTags,
+          title: String(parsed.data.title || path.basename(filePath, '.md')),
+          filename: path.basename(filePath),
+          body: parsed.body,
+          folder: folderRel === '.' ? '' : folderRel,
+          discoveredProjects: projects,
+          replaceExisting: true,
+          maxTags: 9
+        });
+        parsed.data.tags = ensureLanguageTags(curated, parsed.body, path.basename(filePath));
+        const serialized = serializeNote(parsed.data, parsed.body);
+        await fsPromises.writeFile(filePath, serialized, 'utf-8');
+        updatedCount++;
+      } catch {}
+    }
+
+    addLog(
+      `[Orthogonal Tag Taxonomy] Reclassified tags across ${updatedCount} notes into multi-level L0–L7 taxonomy (Snapshot: ${snapshot.sessionId}).`,
+      'success'
+    );
+    res.json({
+      success: true,
+      updatedCount,
+      snapshotId: snapshot.sessionId,
+      message: `Normalized tags on ${updatedCount} notes to Orthogonal Taxonomy (L0–L7).`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/note/refine-single', async (req, res) => {
+  if (!currentConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });
+  const { path: relPath, smartRename } = req.body || {};
+  if (!relPath) return res.status(400).json({ error: 'Note path required' });
+
+  const fullPath = path.join(currentConfig.vaultPath, relPath);
+  if (!isPathInsideVault(fullPath, currentConfig.vaultPath, false) || !fs.existsSync(fullPath)) {
+    return res.status(400).json({ error: 'Valid note inside vault required' });
+  }
+
+  try {
+    const snapshot = createSnapshotSession(currentConfig.vaultPath);
+    await refineFile(fullPath, {
+      dryRun: false,
+      snapshot,
+      smartRename: smartRename !== false
+    });
+    res.json({
+      success: true,
+      snapshotId: snapshot.sessionId,
+      message: `Заметка "${relPath}" классифицирована через связку Jev + LLM.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/agent', async (req, res) => {
+  const { message, history, activeNotePath, autoExecuteActions } = req.body || {};
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'message is required' });
+  }
+
+  try {
+    const result = await runKnowledgeAgentTurn(
+      {
+        message,
+        history: Array.isArray(history) ? history : [],
+        activeNotePath: activeNotePath || null,
+        autoExecuteActions: autoExecuteActions !== false
+      },
+      {
+        vaultPath: currentConfig.vaultPath,
+        llamaUrl: currentConfig.llamaUrl,
+        decisionModelUrl: currentConfig.decisionModelUrl,
+        enableDecisionModel: currentConfig.enableDecisionModel,
+        typeRoutes: currentConfig.typeRoutes
+      },
+      addLog
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/models/test-tandem', async (req, res) => {
+  try {
+    const serverStatus = await llamaManager.getStatus({
+      primaryUrl: currentConfig.llamaUrl,
+      jevUrl: currentConfig.decisionModelUrl,
+      configuredPrimaryModel: currentConfig.primaryModelFile,
+      configuredJevModel: currentConfig.jevModelFile
+    });
+
+    const sampleText = 'Техническое задание и системная архитектура локального ИИ-ассистента для управления базой знаний.';
+    let jevCheck: any = { online: serverStatus.jev.status === 'running', model: serverStatus.jev.modelFilename };
+    if (jevCheck.online) {
+      try {
+        const routerConfig = await buildRouterConfig(currentConfig);
+        const routeRes = await routeHierarchical(
+          sampleText,
+          'ТЗ_Локальный_Ассистент.md',
+          'ТЗ Локальный Ассистент',
+          routerConfig,
+          { timeoutMs: 6000 }
+        );
+        jevCheck = {
+          ...jevCheck,
+          category: routeRes.level1Category,
+          confidence: routeRes.totalConfidence,
+          suggestedFolder: routeRes.suggestedFolder
+        };
+      } catch (e: any) {
+        jevCheck.error = e.message;
+      }
+    }
+
+    let llmCheck: any = { online: serverStatus.primary.status === 'running', model: serverStatus.primary.modelFilename };
+    if (llmCheck.online) {
+      try {
+        const start = Date.now();
+        const resp = await axios.post(
+          `${currentConfig.llamaUrl.replace(/\/+$/, '')}/v1/chat/completions`,
+          {
+            messages: [{ role: 'user', content: 'Ответь одним словом: Готов' }],
+            max_tokens: 10,
+            temperature: 0.1
+          },
+          { timeout: 15000 }
+        );
+        llmCheck.latencyMs = Date.now() - start;
+        llmCheck.reply = resp.data?.choices?.[0]?.message?.content?.trim() || 'OK';
+      } catch (e: any) {
+        llmCheck.error = e.message;
+      }
+    }
+
+    res.json({
+      tandemReady: Boolean(jevCheck.online && llmCheck.online),
+      jev: jevCheck,
+      primaryLlm: llmCheck
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -3400,9 +4072,12 @@ app.post('/api/vault/note/move', async (req, res) => {
   }
 
   try {
+    const oldDir = path.dirname(sourceAbs);
     await fsPromises.mkdir(targetFolderAbs, { recursive: true });
     await fsPromises.rename(sourceAbs, targetAbs);
+    await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
     const newRel = path.relative(currentConfig.vaultPath, targetAbs).replace(/\\/g, '/');
+    triageManager.syncRefinedFile(sourceAbs, targetAbs, targetFolder, filename);
     addLog(`[Note Moved] "${sourcePath}" -> "${newRel}"`, 'success');
     res.json({ success: true, newRelativePath: newRel });
   } catch (err: any) {

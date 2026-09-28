@@ -3,6 +3,7 @@ import fs from 'fs';
 const fsPromises = fs.promises;
 import { createSnapshotSession } from './snapshot';
 import { parseNote, serializeNote } from './frontmatter';
+import { pruneEmptyParentDirs } from './directoryRevisor';
 
 export interface InteractiveTriageQuestion {
   index: number;
@@ -56,19 +57,21 @@ export class TriageManager {
   ): InteractiveTriageItem {
     const id = item.id || `triage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-    // Remove existing entry for same file path
-    this.queue = this.queue.filter(q => q.filePath !== item.filePath);
+    // Remove existing entry for same file path or filename
+    this.queue = this.queue.filter(
+      q => q.filePath !== item.filePath && q.filename !== item.filename
+    );
 
     // Build up to 3 questions from top candidates (C7.1)
-    const topOptions = item.distribution && item.distribution.length > 0
-      ? item.distribution.slice(0, 3)
-      : [{ letter: 'A', option: item.topFolder || '03_Knowledge', probability: item.confidence }];
+    const topOptions =
+      item.distribution && item.distribution.length > 0
+        ? item.distribution.slice(0, 3)
+        : [{ letter: 'A', option: item.topFolder || '03_Knowledge', probability: item.confidence }];
 
     const questions: InteractiveTriageQuestion[] = topOptions.map((opt, idx) => {
       const folder = typeRoutes[opt.option] || opt.option;
-      const questionText = idx === 0
-        ? `Это "${opt.option}"?`
-        : `Тогда это "${opt.option}"?`;
+      const questionText =
+        idx === 0 ? `Is this "${opt.option}"?` : `Then is this "${opt.option}"?`;
       return {
         index: idx,
         targetOption: opt.option,
@@ -96,6 +99,28 @@ export class TriageManager {
     return triageItem;
   }
 
+  /**
+   * Updates the tracked file path after refineFile renames or moves a note,
+   * preventing stale paths and duplicate file creation if Triage is answered later.
+   */
+  public syncRefinedFile(
+    oldFilePath: string,
+    newFilePath: string,
+    newRelativeFolder: string,
+    newFilename: string
+  ): void {
+    for (const item of this.queue) {
+      if (item.filePath === oldFilePath) {
+        item.filePath = newFilePath;
+        item.relativePath = newRelativeFolder;
+        // Keep original filename searchable or update if needed
+        if (!item.filename) {
+          item.filename = newFilename;
+        }
+      }
+    }
+  }
+
   public getNext(): { item: InteractiveTriageItem; question: InteractiveTriageQuestion } | null {
     const pendingItem = this.queue.find(
       i => i.status === 'pending' && i.currentQuestionIndex < i.questions.length
@@ -112,16 +137,36 @@ export class TriageManager {
     id: string,
     questionIndex: number,
     answer: 'yes' | 'no',
-    vaultPath: string
+    vaultPath: string,
+    options?: {
+      rethinkAlternative?: (
+        item: InteractiveTriageItem,
+        rejectedFolders: string[],
+        rejectedOptions: string[]
+      ) => Promise<{ option: string; folder: string; reason?: string } | null>;
+    }
   ): Promise<{
     resolved: boolean;
+    alreadyResolved?: boolean;
     status: 'resolved' | 'pending' | 'manual';
     targetFolder?: string;
     newPath?: string;
+    nextQuestion?: InteractiveTriageQuestion;
+    rethought?: boolean;
   }> {
     const item = this.queue.find(i => i.id === id);
     if (!item) {
       throw new Error(`Triage item "${id}" not found`);
+    }
+
+    if (item.status === 'resolved') {
+      return {
+        resolved: true,
+        alreadyResolved: true,
+        status: 'resolved',
+        targetFolder: item.resolvedFolder,
+        newPath: item.filePath
+      };
     }
 
     const question = item.questions[questionIndex];
@@ -137,77 +182,139 @@ export class TriageManager {
       if (vaultPath && fs.existsSync(vaultPath)) {
         const feedbackDir = path.join(vaultPath, '99_System', 'index');
         await fsPromises.mkdir(feedbackDir, { recursive: true });
-        const feedbackLine = JSON.stringify({
-          noteId: item.id,
-          filePath: item.relativePath,
-          question: question.questionText,
-          targetOption: question.targetOption,
-          answer,
-          ts: new Date().toISOString()
-        }) + '\n';
-        await fsPromises.appendFile(path.join(feedbackDir, 'feedback.jsonl'), feedbackLine, 'utf-8');
+        const feedbackLine =
+          JSON.stringify({
+            noteId: item.id,
+            filePath: item.relativePath,
+            question: question.questionText,
+            targetOption: question.targetOption,
+            answer,
+            ts: new Date().toISOString()
+          }) + '\n';
+        await fsPromises.appendFile(
+          path.join(feedbackDir, 'feedback.jsonl'),
+          feedbackLine,
+          'utf-8'
+        );
       }
     } catch (err) {
       console.error('Failed writing to feedback.jsonl:', err);
     }
 
     if (answer === 'yes') {
-      item.status = 'resolved';
-      item.resolvedFolder = question.targetFolder;
+      return this.resolveToFolder(item.id, question.targetFolder, vaultPath);
+    } else {
+      // Answered NO: advance to next candidate question
+      item.currentQuestionIndex += 1;
 
-      // Physically execute move with snapshot backup
-      let newPath = item.filePath;
-      if (vaultPath && fs.existsSync(item.filePath)) {
+      if (item.currentQuestionIndex < item.questions.length) {
+        return {
+          resolved: false,
+          status: 'pending',
+          nextQuestion: item.questions[item.currentQuestionIndex]
+        };
+      }
+
+      // All initial candidates exhausted: if rethinkAlternative callback is provided, ask AI to rethink and propose a new alternative!
+      if (options?.rethinkAlternative && item.questions.length < 8) {
+        const rejectedFolders = item.questions.map(q => q.targetFolder);
+        const rejectedOptions = item.questions.map(q => q.targetOption);
         try {
-          const snapshot = await createSnapshotSession(vaultPath, 'triage_resolve');
-          await snapshot.backup(item.filePath);
-
-          const targetDir = path.isAbsolute(question.targetFolder)
-            ? question.targetFolder
-            : path.join(vaultPath, question.targetFolder);
-          await fsPromises.mkdir(targetDir, { recursive: true });
-          const destPath = path.join(targetDir, item.filename);
-
-          // Update frontmatter with ai_refined
-          const content = await fsPromises.readFile(item.filePath, 'utf-8');
-          const parsed = parseNote(content);
-          parsed.data.ai_refined = true;
-          parsed.data.category = question.targetFolder;
-          const updatedContent = serializeNote(parsed.data, parsed.body);
-          await fsPromises.writeFile(item.filePath, updatedContent, 'utf-8');
-
-          if (item.filePath !== destPath) {
-            await fsPromises.rename(item.filePath, destPath);
-            newPath = destPath;
+          const alt = await options.rethinkAlternative(item, rejectedFolders, rejectedOptions);
+          if (alt && alt.folder) {
+            const newIdx = item.questions.length;
+            const newQuestion: InteractiveTriageQuestion = {
+              index: newIdx,
+              targetOption: alt.option || alt.folder,
+              targetFolder: alt.folder,
+              questionText: alt.reason
+                ? `${alt.reason} — Move to "${alt.folder}"?`
+                : `Alternative suggestion: Move to "${alt.folder}" (${alt.option})?`
+            };
+            item.questions.push(newQuestion);
+            item.status = 'pending';
+            return {
+              resolved: false,
+              status: 'pending',
+              nextQuestion: newQuestion,
+              rethought: true
+            };
           }
-        } catch (moveErr) {
-          console.error('Failed to move file during triage answer:', moveErr);
+        } catch (rethinkErr) {
+          console.error('Failed to rethink triage alternative:', rethinkErr);
         }
       }
 
+      // All questions exhausted -> manual review
+      item.status = 'manual';
       return {
-        resolved: true,
-        status: 'resolved',
-        targetFolder: question.targetFolder,
-        newPath
+        resolved: false,
+        status: 'manual'
       };
-    } else {
-      // Answered NO: advance to next question
-      item.currentQuestionIndex += 1;
-      if (item.currentQuestionIndex >= item.questions.length) {
-        // All questions exhausted -> manual review
-        item.status = 'manual';
-        return {
-          resolved: false,
-          status: 'manual'
-        };
-      } else {
-        return {
-          resolved: false,
-          status: 'pending'
-        };
+    }
+  }
+
+  /**
+   * Resolves a triage item directly to a chosen or auto-determined folder,
+   * moving the note safely and pruning any empty parent directories left behind.
+   */
+  public async resolveToFolder(
+    id: string,
+    targetFolder: string,
+    vaultPath: string
+  ): Promise<{
+    resolved: boolean;
+    status: 'resolved';
+    targetFolder: string;
+    newPath: string;
+  }> {
+    const item = this.queue.find(i => i.id === id);
+    if (!item) {
+      throw new Error(`Triage item "${id}" not found`);
+    }
+
+    item.status = 'resolved';
+    item.resolvedFolder = targetFolder;
+
+    let newPath = item.filePath;
+    if (vaultPath && fs.existsSync(item.filePath)) {
+      try {
+        const oldDir = path.dirname(item.filePath);
+        const snapshot = await createSnapshotSession(vaultPath, 'triage_resolve');
+        await snapshot.backup(item.filePath);
+
+        const targetDir = path.isAbsolute(targetFolder)
+          ? targetFolder
+          : path.join(vaultPath, targetFolder);
+        await fsPromises.mkdir(targetDir, { recursive: true });
+        const currentBaseName = path.basename(item.filePath);
+        const destPath = path.join(targetDir, currentBaseName);
+
+        const content = await fsPromises.readFile(item.filePath, 'utf-8');
+        const parsed = parseNote(content);
+        parsed.data.ai_refined = true;
+        parsed.data.category = targetFolder;
+        const updatedContent = serializeNote(parsed.data, parsed.body);
+        await fsPromises.writeFile(item.filePath, updatedContent, 'utf-8');
+
+        if (path.resolve(item.filePath) !== path.resolve(destPath)) {
+          await fsPromises.rename(item.filePath, destPath);
+          newPath = destPath;
+          item.filePath = destPath;
+          item.relativePath = targetFolder;
+          await pruneEmptyParentDirs(vaultPath, oldDir);
+        }
+      } catch (moveErr) {
+        console.error('Failed to move file during triage resolution:', moveErr);
       }
     }
+
+    return {
+      resolved: true,
+      status: 'resolved',
+      targetFolder,
+      newPath
+    };
   }
 }
 

@@ -1,4 +1,5 @@
 import { parseDocument, Document } from 'yaml';
+import { isValidSemanticTag } from './tags';
 
 export const DOC_SYMBOL = Symbol.for('yaml_doc');
 
@@ -61,8 +62,8 @@ export function mergeTags(data: Record<string, unknown>, newTags: string[]): voi
 
   const addTag = (raw: unknown) => {
     if (typeof raw !== 'string' && typeof raw !== 'number') return;
-    const clean = String(raw).trim().replace(/^#+/, '');
-    if (!clean) return;
+    const clean = String(raw).trim().replace(/^#+/, '').trim();
+    if (!isValidSemanticTag(clean, { allowSingleLetter: true })) return;
     const lower = clean.toLowerCase();
     if (!seenLower.has(lower)) {
       seenLower.add(lower);

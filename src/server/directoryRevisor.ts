@@ -7,7 +7,7 @@ import { SnapshotSession } from './snapshot';
 import { detectDocumentLanguage } from './language';
 import { extractDocumentInfo, isJunkFile, DocumentInfo } from './documentExtractor';
 import { sanitizeTitle } from './sanitize';
-import { matchProjectByHeader, DEFAULT_PROJECTS, ProjectDefinition } from './projectsRegistry';
+import { matchProjectByHeader, DEFAULT_PROJECTS, ProjectDefinition, loadProjectsRegistry } from './projectsRegistry';
 import { isPathInsideVault } from './validation';
 import { generateStructured } from './llm/generate';
 
@@ -63,7 +63,7 @@ export interface DirectoryAuditReport {
 /**
  * Detects screenplay, dialogue, or narrative storyline markers in note text.
  * C5: Strictly requires sluglines, 3+ distinct dialogue speakers, or 2+ dramaturgy terms.
- * Never flags standard note headers ("ИТОГ:", "ЗАДАЧА:", "СТАТУС:") as dialogue.
+ * Never flags standard note headers as dialogue.
  */
 export function detectScenarioMarkers(text: string, filename: string): { isScenario: boolean; markers: string[]; confidence: number } {
   const lowerText = text.toLowerCase();
@@ -73,31 +73,44 @@ export function detectScenarioMarkers(text: string, filename: string): { isScena
   // Filename markers
   let hasFilenameMarker = false;
   if (
-    lowerName.includes('сценарий') ||
+    lowerName.includes('\u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439') ||
     lowerName.includes('scenario') ||
     lowerName.includes('script') ||
-    lowerName.includes('сюжет') ||
-    lowerName.includes('синопсис') ||
-    lowerName.includes('эпизод') ||
-    lowerName.includes('диалог') ||
-    lowerName.includes('серия') ||
-    lowerName.includes('глава')
+    lowerName.includes('\u0441\u044e\u0436\u0435\u0442') ||
+    lowerName.includes('\u0441\u0438\u043d\u043e\u043f\u0441\u0438\u0441') ||
+    lowerName.includes('\u044d\u043f\u0438\u0437\u043e\u0434') ||
+    lowerName.includes('\u0434\u0438\u0430\u043b\u043e\u0433') ||
+    lowerName.includes('\u0441\u0435\u0440\u0438\u044f') ||
+    lowerName.includes('\u0433\u043b\u0430\u0432\u0430')
   ) {
     hasFilenameMarker = true;
     markers.push('Screenplay indicator in filename');
   }
 
-  // Classical screenplay headings (INT./EXT. or ИНТ./НАТ.)
-  const sluglineRegex = /(?:^|\n)\s*(?:ИНТ|НАТ|ИНТ\/НАТ|EXT|INT|EXT\/INT)[\.\s\-]+[^\n]{3,60}/i;
+  // Classical screenplay headings (INT./EXT.)
+  const sluglineRegex = new RegExp(
+    '(?:^|\\n)\\s*(?:\\u0418\\u041d\\u0422|\\u041d\\u0410\\u0422|\\u0418\\u041d\\u0422\\/\\u041d\\u0410\\u0422|EXT|INT|EXT\\/INT)[\\.\\s\\-]+[^\\n]{3,60}',
+    'i'
+  );
   const hasSlugline = sluglineRegex.test(text);
   if (hasSlugline) {
-    markers.push('Scene sluglines (INT./EXT. / ИНТ./НАТ.)');
+    markers.push('Scene sluglines (INT./EXT.)');
   }
 
   // Character dialogue lines: requires 3 or more distinct speaker names
-  const dialogueLineRegex = /(?:^|\n)\s*(?:([А-ЯЁA-Z]{3,20})(?:\s*\([^\)]+\))?|\*\*([А-ЯЁA-Z\s]{3,20})\*\*)\s*:\s*[^\n]{3,}/g;
+  const dialogueLineRegex = new RegExp(
+    '(?:^|\\n)\\s*(?:([\\u0410-\\u042f\\u0401A-Z]{3,20})(?:\\s*\\([^\\)]+\\))?|\\*\\*([\\u0410-\\u042f\\u0401A-Z\\s]{3,20})\\*\\*)\\s*:\\s*[^\\n]{3,}',
+    'g'
+  );
   const commonSectionHeaders = new Set([
-    'ИТОГ', 'ЗАДАЧА', 'СТАТУС', 'ВАЖНО', 'ПРИМЕЧАНИЕ', 'ЦЕЛЬ', 'ПЛАН', 'ВНИМАНИЕ',
+    '\u0418\u0422\u041e\u0413',
+    '\u0417\u0410\u0414\u0410\u0427\u0410',
+    '\u0421\u0422\u0410\u0422\u0423\u0421',
+    '\u0412\u0410\u0416\u041d\u041e',
+    '\u041f\u0420\u0418\u041c\u0415\u0427\u0410\u041d\u0418\u0415',
+    '\u0426\u0415\u041b\u042c',
+    '\u041f\u041b\u0410\u041d',
+    '\u0412\u041d\u0418\u041c\u0410\u041d\u0418\u0415',
     'NOTE', 'TODO', 'STATUS', 'SUMMARY', 'GOAL', 'IMPORTANT', 'INFO', 'RESULT'
   ]);
   const distinctSpeakerNames = new Set<string>();
@@ -116,9 +129,25 @@ export function detectScenarioMarkers(text: string, filename: string): { isScena
 
   // Narrative / dramaturgy keywords (requires >= 2 keywords)
   const narrativeKeywords = [
-    'сюжетная линия', 'арка героя', 'протагонист', 'антагонист', 'кульминация',
-    'завязка', 'развязка', 'реплика', 'ремарка', 'сцена 1', 'сцена 2', 'акт 1',
-    'синопсис', 'персонажи:', 'раскадровка', 'сценарный план', 'plotline', 'screenplay'
+    '\u0441\u044e\u0436\u0435\u0442\u043d\u0430\u044f \u043b\u0438\u043d\u0438\u044f',
+    '\u0430\u0440\u043a\u0430 \u0433\u0435\u0440\u043e\u044f',
+    '\u043f\u0440\u043e\u0442\u0430\u0433\u043e\u043d\u0438\u0441\u0442',
+    '\u0430\u043d\u0442\u0430\u0433\u043e\u043d\u0438\u0441\u0442',
+    '\u043a\u0443\u043b\u044c\u043c\u0438\u043d\u0430\u0446\u0438\u044f',
+    '\u0437\u0430\u0432\u044f\u0437\u043a\u0430',
+    '\u0440\u0430\u0437\u0432\u044f\u0437\u043a\u0430',
+    '\u0440\u0435\u043f\u043b\u0438\u043a\u0430',
+    '\u0440\u0435\u043c\u0430\u0440\u043a\u0430',
+    '\u0441\u0446\u0435\u043d\u0430 1',
+    '\u0441\u0446\u0435\u043d\u0430 2',
+    '\u0430\u043a\u0442 1',
+    '\u0441\u0438\u043d\u043e\u043f\u0441\u0438\u0441',
+    '\u043f\u0440\u0435\u0441\u043e\u043d\u0430\u0436\u0438:',
+    '\u043f\u0435\u0440\u0441\u043e\u043d\u0430\u0436\u0438:',
+    '\u0440\u0430\u0441\u043a\u0430\u0434\u0440\u043e\u0432\u043a\u0430',
+    '\u0441\u0446\u0435\u043d\u0430\u0440\u043d\u044b\u0439 \u043f\u043b\u0430\u043d',
+    'plotline',
+    'screenplay'
   ];
 
   let dramaturgyCount = 0;
@@ -348,17 +377,19 @@ export async function auditDirectoryProject(options: {
 
   // Step 1: Pre-classify each file with deterministic heuristic & scenario markers
   const analyzedItems: FileRevisionItem[] = [];
+  const vaultProjects = await loadProjectsRegistry(vaultPath);
 
   for (const entry of fileEntries) {
     const { docInfo, relativePath, subfolder, absolutePath } = entry;
     const scenarioCheck = detectScenarioMarkers(docInfo.snippet || docInfo.fullText, docInfo.filename);
-    const foreignProject = detectProjectAffiliation(docInfo.snippet || docInfo.fullText, docInfo.filename);
+    const foreignProject = detectProjectAffiliation(docInfo.snippet || docInfo.fullText, docInfo.filename, vaultProjects);
 
     let detectedType: DetectedItemType = 'project_asset';
     let isOutlier = false;
     let contradictionReason = '';
-    const currentFolder = path.dirname(relativePath) === '.' ? '' : path.dirname(relativePath);
-    let suggestedFolder = relativeDir || currentFolder || '03_Knowledge';
+    const currentFolder = (path.dirname(relativePath) === '.' ? '' : path.dirname(relativePath)).replace(/\\/g, '/');
+    const currentFolderLower = currentFolder.toLowerCase();
+    let suggestedFolder = (relativeDir || currentFolder || '03_Knowledge').replace(/\\/g, '/');
     let suggestedAction: 'move' | 'convert_to_md' | 'delete_junk' = 'move';
     let coherenceScore = 90;
     let confidence = 0.85;
@@ -377,15 +408,23 @@ export async function auditDirectoryProject(options: {
     // 2. Check for Scenario / Screenplay / Storyline
     else if (scenarioCheck.isScenario) {
       detectedType = 'scenario';
-      isOutlier = true;
-      coherenceScore = 15;
-      confidence = scenarioCheck.confidence;
-      contradictionReason = `Detected narrative / screenplay elements: ${scenarioCheck.markers.join(', ')}. Not project documentation.`;
       suggestedFolder = '01_Projects/Scenarios';
       suggestedAction = docInfo.category === 'raw_document' ? 'convert_to_md' : 'move';
+      const alreadyInScenarioFolder =
+        currentFolderLower === '01_projects/scenarios' ||
+        currentFolderLower === '03_knowledge/scripts';
+      if (!alreadyInScenarioFolder || suggestedAction === 'convert_to_md') {
+        isOutlier = true;
+        coherenceScore = 15;
+        confidence = scenarioCheck.confidence;
+        contradictionReason = `Detected narrative / screenplay elements: ${scenarioCheck.markers.join(', ')}. Not project documentation.`;
+      }
     }
-    // 3. Check for Foreign Project affiliation
-    else if (foreignProject && (!relativeDir || !relativeDir.toLowerCase().includes(path.basename(foreignProject).toLowerCase()))) {
+    // 3. Check for Foreign Project affiliation (compare against file's actual currentFolder, NOT relativeDir)
+    else if (
+      foreignProject &&
+      !currentFolderLower.includes(path.basename(foreignProject).toLowerCase())
+    ) {
       detectedType = 'foreign_project';
       isOutlier = true;
       coherenceScore = 20;
@@ -412,7 +451,7 @@ export async function auditDirectoryProject(options: {
       docInfo.snippet.includes('```python') ||
       docInfo.snippet.includes('```typescript')
     ) {
-      if (!currentFolder.toLowerCase().includes('programming') && !currentFolder.toLowerCase().includes('technical')) {
+      if (!currentFolderLower.includes('programming') && !currentFolderLower.includes('technical')) {
         detectedType = 'technical_code';
         isOutlier = true;
         coherenceScore = 35;
@@ -430,14 +469,14 @@ export async function auditDirectoryProject(options: {
       suggestedFolder = '03_Knowledge';
       suggestedAction = 'move';
     }
-    // 6. Check for media assets
+    // 6b. Check for media assets
     else if (docInfo.category === 'media_asset') {
       detectedType = 'media_asset';
       coherenceScore = 70;
       suggestedAction = 'move';
     }
-    // 7. Check if file is in a messy subfolder (e.g. "old", "trash", "temp", "drafts")
-    else if (subfolder) {
+    // 7. Check if file is in a messy nested subfolder (e.g. "old", "trash", "temp", "drafts"), excluding top-level 06_Archive itself
+    else if (subfolder && currentFolderLower !== '06_archive') {
       const subLower = subfolder.toLowerCase();
       if (subLower.includes('trash') || subLower.includes('junk') || subLower.includes('archive')) {
         isOutlier = true;
@@ -445,6 +484,17 @@ export async function auditDirectoryProject(options: {
         contradictionReason = `Located in archive/trash subfolder "${subfolder}". Recommend consolidating.`;
         suggestedFolder = '06_Archive';
       }
+    }
+
+    // Final idempotency guard: if a move item is already in its exact suggestedFolder, it is NOT an outlier
+    if (
+      isOutlier &&
+      suggestedAction === 'move' &&
+      currentFolderLower === suggestedFolder.replace(/\\/g, '/').toLowerCase()
+    ) {
+      isOutlier = false;
+      coherenceScore = 95;
+      contradictionReason = '';
     }
 
     analyzedItems.push({
@@ -575,19 +625,35 @@ Return ONLY raw JSON with this exact structure:
 }
 
 /**
- * Removes empty directories recursively under rootDir, while preserving core PARA and system directories.
+ * Removes empty directories recursively under rootDir, while preserving core system/model directories and vaultRoot.
  */
-const PROTECTED_DIR_NAMES = new Set([
-  '00_inbox', '00_moc', '01_projects', '02_areas', '03_knowledge',
-  '04_journal', '05_ideas', '05_resources', '06_archive', '99_system',
-  'llm', 'models', 'bin', 'processed', 'review'
+const PROTECTED_SYSTEM_DIRS = new Set([
+  '.obsidian',
+  '.git',
+  '.snapshots',
+  '99_system',
+  'llm',
+  'models',
+  'bin',
+  'node_modules'
 ]);
 
-export async function pruneEmptyDirectories(rootDir: string): Promise<string[]> {
+const OS_JUNK_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
+
+export async function pruneEmptyDirectories(rootDir: string, vaultRoot?: string): Promise<string[]> {
   const removed: string[] = [];
+  const resolvedVaultRoot = vaultRoot ? path.resolve(vaultRoot) : null;
+  const resolvedRootDir = path.resolve(rootDir);
 
   async function clean(dir: string): Promise<boolean> {
     if (!fs.existsSync(dir)) return true;
+
+    const resolvedDir = path.resolve(dir);
+    const baseLower = path.basename(dir).toLowerCase();
+
+    if (PROTECTED_SYSTEM_DIRS.has(baseLower)) {
+      return false;
+    }
 
     let entries: fs.Dirent[];
     try {
@@ -597,20 +663,36 @@ export async function pruneEmptyDirectories(rootDir: string): Promise<string[]> 
     }
 
     let allChildrenEmpty = true;
+    const osJunkToDelete: string[] = [];
+
     for (const ent of entries) {
       const fullPath = path.join(dir, ent.name);
       if (ent.isDirectory()) {
+        if (ent.name.startsWith('.')) {
+          allChildrenEmpty = false;
+          continue;
+        }
         const isChildEmpty = await clean(fullPath);
         if (!isChildEmpty) {
           allChildrenEmpty = false;
         }
+      } else if (OS_JUNK_FILES.has(ent.name.toLowerCase())) {
+        osJunkToDelete.push(fullPath);
       } else {
         allChildrenEmpty = false;
       }
     }
 
-    const baseLower = path.basename(dir).toLowerCase();
-    if (allChildrenEmpty && dir !== rootDir && !PROTECTED_DIR_NAMES.has(baseLower)) {
+    const isVaultRootItself =
+      (resolvedVaultRoot && resolvedDir === resolvedVaultRoot) ||
+      (!resolvedVaultRoot && resolvedDir === resolvedRootDir && entries.some(e => e.name === '.obsidian' || e.name === '99_System'));
+
+    if (allChildrenEmpty && !isVaultRootItself) {
+      for (const junkPath of osJunkToDelete) {
+        try {
+          await fsPromises.unlink(junkPath);
+        } catch {}
+      }
       try {
         await fsPromises.rmdir(dir);
         removed.push(dir);
@@ -620,10 +702,40 @@ export async function pruneEmptyDirectories(rootDir: string): Promise<string[]> 
       }
     }
 
-    return allChildrenEmpty && !PROTECTED_DIR_NAMES.has(baseLower);
+    return false;
   }
 
   await clean(rootDir);
+  return removed;
+}
+
+/**
+ * Walks upwards from a source directory after a file move and removes any empty folders
+ * up to (but never including) vaultPath.
+ */
+export async function pruneEmptyParentDirs(vaultPath: string, startDir: string): Promise<string[]> {
+  if (!vaultPath || !startDir) return [];
+  const removed: string[] = [];
+  const resolvedVault = path.resolve(vaultPath);
+  let current = path.resolve(startDir);
+
+  while (
+    current.startsWith(resolvedVault) &&
+    current !== resolvedVault &&
+    fs.existsSync(current)
+  ) {
+    const baseLower = path.basename(current).toLowerCase();
+    if (PROTECTED_SYSTEM_DIRS.has(baseLower) || baseLower.startsWith('.')) {
+      break;
+    }
+    const r = await pruneEmptyDirectories(current, resolvedVault);
+    if (r.length > 0) {
+      removed.push(...r);
+      current = path.dirname(current);
+    } else {
+      break;
+    }
+  }
   return removed;
 }
 
@@ -800,11 +912,15 @@ export async function applyRevisionPlan(options: {
     for (const dir of affectedDirs) {
       if (dir.startsWith(vaultPath) && dir !== vaultPath) {
         try {
-          const removed = await pruneEmptyDirectories(dir);
+          const removed = await pruneEmptyParentDirs(vaultPath, dir);
           prunedFoldersCount += removed.length;
         } catch {}
       }
     }
+    try {
+      const swept = await pruneEmptyDirectories(vaultPath, vaultPath);
+      prunedFoldersCount += swept.length;
+    } catch {}
   }
 
   return {

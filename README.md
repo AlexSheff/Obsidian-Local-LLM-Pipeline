@@ -1,128 +1,89 @@
-# Obsidian Local LLM Pipeline
+# Obsidian Local LLM Pipeline (v5.0)
 
-An automated, **Zero-Config**, 100% offline intelligence pipeline for **Obsidian** powered by local LLMs via `llama.cpp`.
+An automated, **Vault-Agnostic**, **100% offline** intelligence pipeline and knowledge workspace for **Obsidian** powered by a local dual-model engine (`Jev Decision Router` + `Primary Generative LLM`) via `llama.cpp`.
 
-This system operates completely on your local machine with strict resource bounds (optimized for 16 GB RAM / 6 CPU cores). It ingests, analyzes, and categorizes raw files into a structured PARA knowledge vault, runs recursive project audits, and builds a **Dynamic Semantic Hypergraph (DSH)** using local decision model primitives without external cloud APIs.
-
----
-
-## What's New in v4.0: Dynamic Semantic Hypergraph (DSH)
-
-v4.0 introduces the **Dynamic Semantic Hypergraph (DSH)** layer powered by the local quantized model `Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf`. All semantic relations and state forecasts are computed using typed logprob evaluations rather than autoregressive text generation, enabling fast, hallucination-free decision graphs on CPU.
-
-### 1. Three Core Decision Primitives (Zero-Text Logprob Logic)
-- **Noul (`noul`)**: `(state, question) -> p(Yes) ∈ [0, 1]`. Evaluates hybridization — whether two tokens can form a logical semantic relation.
-- **Score (`score`)**: `(state, question, scale) -> rating ∈ [1, 5]`. Evaluates selection — the semantic bond strength of a triplet.
-- **Choice (`choice`)**: `(state, question, options[≤26]) -> bestCandidate + distribution`. Evaluates Oracle state transitions and predicts emerging graph relations.
-
-### 2. 3-Uniform Semantic Knowledge Hypergraph
-- **Tokens (Vertices)**: Extracted semantic units (concepts, projects, aliases, wikilinks) stored idempotently in `99_System/hypergraph/tokens.jsonl`.
-- **Hyperedges**: 3-uniform triples `(a, b, c)` with weights $w \in [0, 1]$ stored in `99_System/hypergraph/edges.jsonl`. Binary relations are modeled as `(a, b, 'связано-с')`.
-- **Candidate Pre-Filter**: Protects CPU execution by scoping candidate pairs to shared note paragraphs/sections and capping candidates per note (`maxCandidatesPerNote: 15`).
-- **EMA Weight Updates**: Reinforces connection weights upon recurrent co-occurrence using Exponential Moving Average ($\alpha = 0.3$): $w_{new} = 0.3 \cdot w_{sample} + 0.7 \cdot w_{prev}$.
-
-### 3. Oracle Engine: Predicting $H_{t+1}$
-- Analyzes existing graph clusters to discover candidate relations between community neighbors.
-- Employs the `choice` primitive across $\le 26$ candidates to forecast missing or emergent links.
-- High-probability predictions ($p \ge 0.5$) are saved as `pending` hyperedges (`evidence.type: "oracle"`).
-- State transitions and execution ticks are versioned in `99_System/hypergraph/ticks.jsonl`.
-
-### 4. Human-in-the-Loop Triage Bridge & Auto-Stop Guard
-- Integrates with the C7 Review & Triage workflow. Users confirm or reject pending hyperedge proposals with 1 click.
-- Decisions are logged to `99_System/index/feedback.jsonl` for continuous calibration.
-- **Safety Auto-Stop**: If the confirmation rate drops below 30% after 10 reviews, the Oracle auto-pauses to prevent graph contamination.
-
-### 5. Observability, Resource Caps & Maintenance
-- **Rate Limiter**: Shared semaphore queue (`maxConcurrent: 1`) preventing concurrent model thrashing.
-- **Resource Limits**: Configurable per-run execution caps (`maxCallsPerRun: 2000`, `maxWallClockMsPerRun: 600000`).
-- **Cost & Latency Tracking**: Call logs recorded in `99_System/hypergraph/cost_log.jsonl` with latency drift alerts.
-- **Model Epoch Versioning**: Tracks model hashes in `model_manifest.json`. Changing model files transitions old edges to `stale` for lazy re-evaluation.
-- **Garbage Collection**: `npm run hypergraph:gc` prunes zero-evidence edges and deprecated orphan tokens with automatic pre-deletion snapshots.
-- **Automated Reporting**: `npm run hypergraph:report` produces comprehensive analytics in `99_System/hypergraph/_Report.md`.
+Designed to run on **any PC and any Obsidian Vault without hardcoded projects or paths**, with strict resource bounds (optimized for 16 GB RAM / 4–6 CPU threads). It dynamically discovers your vault's hierarchy on disk, classifies and routes documents using two-tier logprob + LLM routing, organizes tags using a bounded **Orthogonal Multi-Level Tag Taxonomy (L0–L7)**, prunes empty directories automatically after moves, and provides a **Local AI Knowledge Chat & File Agent** to search, plan, create, edit, and move notes directly from the workspace.
 
 ---
 
-## What's New in v4.1: Live Hierarchical Router, Calibration Gate & Security Hardening
+## Key Capabilities in v5.0
 
-1. **Two-Tier Hierarchical Routing in Live Pipeline (`D-LIVE`, `C2` & `C4`)**:
-   - Connected directly into live `00_Inbox` processing (`processFile`), vault refinement (`refineFile`), and batch triage (`routeHierarchical`).
-   - **Tier 1 (Genre / Category)**: Classifies notes across top-level taxonomy categories (`Project`, `Essay/Knowledge`, `Dialogue/Transcript`, `Poem`, `Screenplay/Script`, `Idea`, `Journal/Diary`, `Technical/Code`) so folders like `03_Knowledge/Poems` are never cut off by large project lists.
-   - **Tier 2 (`projects.yaml` Registry & Project-as-Link)**: Matches projects via `99_System/projects.yaml`. Core project documents (`coreDocTypes`: specs, roadmaps, architecture) route physically to `01_Projects/<id>`, whereas non-core project notes remain in their genre folder (e.g., `03_Knowledge/Essays`) and receive `project: "[[<id>]]"` in YAML frontmatter.
-   - **Ambiguity Triage Queue (`C7`)**: Low-confidence predictions (`totalConfidence < threshold`) are automatically enqueued into `TriageManager` for interactive Yes/No confirmation logged to `99_System/index/feedback.jsonl`.
+### 1. 100% Dynamic, Vault-Agnostic Architecture (Zero Hardcoding)
+- **On-the-Fly Structure Discovery (`discoverVaultStructure` & `loadProjectsRegistry`)**: Connects to any local Obsidian Vault directory and automatically discovers existing category folders, project roots (`01_Projects/*`), and active tags directly from disk.
+- **Automatic Bilingual Phonetic Aliases**: Dynamically generates Latin/Cyrillic transliterations and stem aliases for every project folder discovered in your vault.
+- **Semantic Guardrails (`validateAndSanitizeRoute` & `preserveMeaningfulTitle`)**: Prevents models from misrouting general knowledge notes, meeting agendas, or ideas into unrelated project folders, and preserves series numbers and explicit project codes in note titles.
+- **Automatic Empty Folder Pruning (`pruneEmptyDirectories` & `pruneEmptyParentDirs`)**: Every file move, rename, triage resolution, duplicate cleanup, or batch refinement automatically cleans up empty parent directories (including folders containing only OS metadata junk such as `.DS_Store` or `Thumbs.db`).
 
-2. **Unified Structured LLM Generation & Review Quarantine (`C1` & `C8`)**:
-   - All generative JSON calls (`processFile`, `refineFile`, `fastFallbackRefine`, `directoryRevisor`) execute through `generateStructured` using `response_format: json_schema` (with automatic `json_object` fallback) and strict Zod schema validation.
-   - Eliminates silent regex fallbacks and `processing_error` tags: if an incoming Inbox note fails JSON parsing or schema validation (`GenerationError`), it is safely quarantined to `00_Inbox/Review/` with `review_reason` recorded in YAML frontmatter.
+### 2. Orthogonal Multi-Level Tag Taxonomy (`L0–L7`) & Instant Tag Manager
+Instead of turning every word in a note into a flat tag, the pipeline enforces a high-signal **Orthogonal Faceted Taxonomy** (bounded to max depth 3 and 5–9 tags per note) where each tag answers a distinct question:
 
-3. **Empirical Calibration Gate & Security Invariants (`R1`–`R8`, `C6`)**:
-   - **Calibration Gate (`isCalibrated`)**: `decisionMode: "fast_routing"` requires a verified `99_System/index/thresholds.json` (`calibrated: true`, computed via `npm run calibrate` or `POST /api/calibrate`). Uncalibrated configs automatically fall back to `"hybrid"` on startup and return HTTP `400` on `POST /api/config`.
-   - **Loopback & Dev-Mode Safety**: Server binds to `127.0.0.1` by default (`resolveHost`) and only mounts Vite dev middleware on explicit `NODE_ENV=development` (`resolveIsDevMode`).
-   - **Vault Boundary Enforcement (`isPathInsideVault`)**: Every move, conversion, and `delete_junk` action in `applyRevisionPlan`, `refineFile`, and `processFile` validates both source and destination paths against path traversal.
-   - **Explicit User Opt-In (`selectedForMove: false`)**: Directory Revisor audits never pre-select items for move or deletion by default.
-   - **Hidden-Vault Watcher Compatibility (`isInboxPathIgnored`)**: Evaluates dot-segments strictly relative to `00_Inbox` so vaults stored inside hidden parent directories (e.g., `~/.vaults/...`) work out of the box.
+| Level / Axis | Prefix | Core Question | Canonical Examples |
+| :--- | :--- | :--- | :--- |
+| **L0 — Infrastructure** | *(root)* | Infrastructure, methodology, or standard? | `#system`, `#meta`, `#knowledge`, `#method`, `#protocol`, `#architecture`, `#reference` |
+| **L1 — Object Type** | `type/` | What kind of object is this? | `#type/project`, `#type/research`, `#type/whitepaper`, `#type/scenario`, `#type/idea`, `#type/task`, `#type/meeting`, `#type/concept`, `#type/protocol`, `#type/reference`, `#type/tool` |
+| **L2 — Domain** | `domain/` | Which subject domain does it belong to? | `#domain/AI`, `#domain/AI/agents`, `#domain/AI/LLM`, `#domain/semantics`, `#domain/hypergraph`, `#domain/knowledge-management`, `#domain/software`, `#domain/philosophy`, `#domain/film`, `#domain/transmedia`, `#domain/business`, `#domain/economy` |
+| **L3 — Project / Research** | `project/`, `research/` | Which project or research stream? | Dynamically populated from Vault (`#project/<FolderName>`) + `#project/Hermes`, `#project/Obsidian-LLM-Pipeline`, `#project/Neuromicon`, `#research/semantic-hypergraph`, `#research/JeV-response` |
+| **L4 — Subsystem / Concept** | `system/`, `concept/` | What function or concept does it implement? | `#system/agent-orchestration`, `#system/routing`, `#system/classification`, `#system/tagging`, `#concept/World-1149`, `#concept/Protocol-Contact` |
+| **L5 — Status** | `status/` | What state is the work in? | `#status/idea`, `#status/research`, `#status/design`, `#status/prototype`, `#status/active`, `#status/testing`, `#status/paused`, `#status/completed`, `#status/archived` |
+| **L6 — Priority** | `priority/` | How critical is it? | `#priority/P0` (Critical), `#priority/P1` (Current), `#priority/P2` (Next), `#priority/P3` (Backlog) |
+| **L7 — Work Stage** | `stage/` | Where in the lifecycle is this material? | `#stage/question`, `#stage/discovery`, `#stage/research`, `#stage/model`, `#stage/design`, `#stage/implementation`, `#stage/validation`, `#stage/deployment`, `#stage/measurement` |
+| **Epistemic Axis** | `knowledge/` | What is the epistemic nature of this knowledge? | `#knowledge/fact`, `#knowledge/observation`, `#knowledge/hypothesis`, `#knowledge/model`, `#knowledge/theory`, `#knowledge/assumption`, `#knowledge/decision`, `#knowledge/evidence`, `#knowledge/specification` |
+| **Relation Axis** | `relation/` | How does it relate to other entities? | `#relation/dependency`, `#relation/component`, `#relation/alternative`, `#relation/extension`, `#relation/integration`, `#relation/conflict` |
 
-4. **Crash-Resilient 1-Click Master Vault Reorganization**:
-   - Uses lightweight head extraction (`lightweight: true`) during full-vault audits to avoid memory spikes on large PDFs/DOCX files, drains `llama-server` `stdout`/`stderr` pipes continuously to prevent 64 KB buffer deadlocks, and creates unique timestamped undo snapshots.
+- **Strict Garbage-Tag Filtering (`isValidSemanticTag`)**: Automatically strips non-word alphanumeric codes (`#01G23`, `#w3x06`, `#a3ps9`), numeric IDs, and folder prefixes (`#01_Projects`) across YAML frontmatter parsing, extraction, and saving.
+- **1-Click Interactive UI Controls**:
+  - **Quick Remove (`×`)**: Click `×` on any tag in the note editor to immediately remove it from the file.
+  - **Interactive L0–L7 Taxonomy Picker**: Toggle tags across any orthogonal axis in 1 click or add custom tags to your vault's taxonomy (`99_System/tag_taxonomy.json`).
+  - **1-Click Redefine (`Redefine Tags L0–L7`)**: Replaces noisy legacy tags on a single note—or across the entire Vault (`Normalize All Tags L0–L7`)—with a clean orthogonal tag set backed by automatic undo snapshots.
 
----
+### 3. Local AI Knowledge Chat & File Agent (`Jev + LLM Tandem`)
+- **Full-Vault Semantic Search (RAG)**: Finds relevant notes across your vault using bilingual stem matching and injects grounded context into the local LLM.
+- **Natural-Language File Management**: Ask the local chat assistant to **find notes**, **draft project roadmaps**, **create new Markdown notes** in target PARA folders, **append/edit sections** in the currently open note, or **move files** between folders—all with automatic snapshot backups.
+- **Live Tandem Verification (`Verify Jev + LLM`)**: Tests both the Jev Decision Router (Port 1234) and Primary LLM (Port 8080) in 1 click and gracefully falls back when either server is offline.
 
-## What's New in v3.5
+### 4. Smart Ambiguity Triage with AI Rethink & Auto-Resolve
+- **Distinct Multi-Candidate Proposals**: Ambiguous notes (`confidence < threshold`) are queued with 3 distinct candidate folders.
+- **AI Rethink on "No" (`rethinkTriageAlternativeForNote`)**: Clicking **"No, Propose Alternative"** instructs the engine to exclude rejected folders, re-evaluate the note's content against remaining vault directories via Jev + semantic rules, and propose a smart alternative.
+- **1-Click Auto-Resolve (`Auto-Resolve All`)**: Automatically resolves single items or the entire triage queue into the best-matching vault folders and prunes empty directories.
 
-1. **Language-Aware Naming & Tagging Enforcement**:
-   - **Title Language Rule**: If note content is in Russian &rarr; document title is strictly in Russian. If in English &rarr; title is strictly in English.
-   - **Post-Processing Protection (`enforceTitleLanguage`)**: Recovers native titles if a model translates Russian titles into English.
-   - **Mandatory Language Tags (`#ru`, `#en`, `#ph`)**: Automatically detects prose and prepends language tags.
-
-2. **16 GB RAM & Disk I/O Throttling Protection**:
-   - Built specifically to prevent Windows 100% RAM exhaustion and SSD thrashing.
-   - Context window strictly bounded to `-c 2048` and threads locked to `-t 4`.
-
-3. **Dual-Model Coordination**:
-   - **Primary Model**: `Hermes-3-Llama-3.2-3B.Q4_K_M.gguf` (Port 8080: deep summarization, routing).
-   - **Decision Model**: `Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf` (Port 1234: fast routing & hypergraph logic).
-
-4. **Directory Revisor (Chaos Cleanup & Project Audits)**:
-   - Recursive scanning up to 10 levels deep with ghost note detection and 1-click snapshot rollback.
-
----
-
-## CLI Commands (Calibration, Projects & Hypergraph)
-
-| Command | Description |
-| :--- | :--- |
-| `npm run calibrate` | Evaluates empirical routing accuracy on organic vault notes and writes `99_System/index/thresholds.json`. |
-| `npm run hypergraph:spike` | Benchmark Noul, Score, and Choice primitives on local hardware and record `spike_report.md`. |
-| `npm run hypergraph:bootstrap -- --vault <path>` | Full initial vault pass: token extraction, DNA logic, and initial hypergraph generation. |
-| `npm run hypergraph:report -- --vault <path>` | Compiles graph dimensions, primitive latency tables, and top hyperedges into `_Report.md`. |
-| `npm run hypergraph:migrate -- --vault <path>` | Validates schema version, syncs model epochs, and applies TTL edge decay. |
-| `npm run hypergraph:gc -- --vault <path>` | Prunes zero-evidence edges and orphan tokens after saving a snapshot backup. |
+### 5. Dynamic Semantic Hypergraph (DSH) & Calibration Gate
+- **Three Logprob Primitives (`noul`, `score`, `choice`)**: Computes 3-uniform semantic hyperedges (`99_System/hypergraph/edges.jsonl`) and Oracle state predictions (`ticks.jsonl`) using typed logprob evaluations.
+- **Structured LLM Generation & Quarantine (`C1` & `C8`)**: Enforces JSON schema validation with safe quarantine to `00_Inbox/Review/` on malformed outputs and HTTP 400 context-overflow automatic retry with compact prompts.
+- **Security & Crash Resilience (`R1`–`R8`)**: Loopback host binding (`127.0.0.1`), strict vault boundary checks (`isPathInsideVault`), global Express and process exception handlers, and continuous `stdout`/`stderr` pipe draining for `llama-server` child processes.
 
 ---
 
-## Vault Architecture (PARA + Hypergraph)
+## Unified 3-Tab Workspace
+
+1. **1. Vault Workspace & AI Chat**: Browse and filter documents by folder, language, and tag; edit notes with the interactive **L0–L7 Orthogonal Tag Picker**; and collaborate with the **Local AI Chat & Vault Agent**.
+2. **2. Unified Pipeline & Audits**: Configure your Vault path, initialize PARA directories, run the **Full Auto-Pipeline (Clean + Sort + Prune Empty)**, normalize vault tags, resolve **Ambiguity Triage**, audit folders with **Directory Revisor**, clean duplicates, and explore the **Semantic Hypergraph**.
+3. **3. Dual-Model Engine (Jev + LLM)**: Monitor live `llama-server` RAM and context telemetry on ports `1234` and `8080`, switch 16 GB RAM-safe profiles, and generate `.bat` launcher scripts.
+
+---
+
+## Vault Architecture (PARA + Orthogonal Taxonomy + Hypergraph)
 
 ```text
-D:\Obsidian\User_Vault\
+<Your_Obsidian_Vault>/
 ├── 00_Inbox/                  <- Drop incoming files here for automated routing
 │   ├── Processed/             <- Fallback processed notes
 │   └── Review/                <- Quarantined notes with review_reason in frontmatter
 ├── 00_MOC/                    <- Maps of Content
-├── 01_Projects/               <- Active projects (core specs, roadmaps, architecture)
-├── 02_Areas/                  <- Long-term domains
-├── 03_Knowledge/              <- Essays, Dialogues, Code, Poems, Scripts
+├── 01_Projects/               <- Active projects (discovered dynamically from disk)
+├── 02_Areas/                  <- Long-term areas of responsibility
+├── 03_Knowledge/              <- Essays, Dialogues, Technical, Poems, Scripts
 ├── 04_Journal/                <- Daily logs & digests
-├── 05_Ideas/                  <- Raw brainstorming
-├── 06_Archive/                <- Completed or obsolete notes
+├── 05_Ideas/                  <- Raw brainstorming & innovations
+├── 06_Archive/                <- Completed or archived notes
 └── 99_System/
-    ├── projects.yaml          <- Canonical project registry (id, folder, aliases, coreDocTypes)
+    ├── projects.yaml          <- Auto-bootstrapped / customizable project registry
+    ├── tag_taxonomy.json      <- Customizable L0–L7 Orthogonal Tag Taxonomy
     ├── hypergraph/
     │   ├── tokens.jsonl       <- Canonical token registry
-    │   ├── edges.jsonl        <- 3-uniform hyperedges with weights
+    │   ├── edges.jsonl        <- 3-uniform hyperedges with EMA weights
     │   ├── note_tokens.jsonl  <- Inverted note-to-token index
     │   ├── ticks.jsonl        <- Oracle versioned prediction ticks
     │   ├── cost_log.jsonl     <- Decision primitive execution logs
-    │   ├── model_manifest.json<- Model file hash and epoch metadata
-    │   ├── config.json        <- Hypergraph thresholds and caps
     │   └── _Report.md         <- Comprehensive topology and latency report
     ├── index/
     │   ├── thresholds.json    <- Empirical calibration gate (tau, accuracy, coverage)
@@ -132,62 +93,29 @@ D:\Obsidian\User_Vault\
 
 ---
 
-## Hardware Configuration (16 GB RAM Profile)
+## Hardware Configuration (16 GB RAM Safe Profile)
 
 | Model File | Role | Port | Context (`-c`) | Threads (`-t`) | Est. RAM |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `Hermes-3-Llama-3.2-3B.Q4_K_M.gguf` | Primary Router / Classifier | `8080` | `2048` | `4` | ~2.5 GB |
-| `Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf` | Decision Model & DSH | `1234` | `2048` - `4096` | `4` | ~1.6 GB |
-| `Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf` | Advanced Coder (Optional) | `8080` | `2048` | `4` | ~4.8 GB |
-
-### Windows Launcher Script Example
-```cmd
-@echo off
-title Start Local LLM Servers (16GB Balanced)
-cd /d "D:\Obsidian\Alex\Vault\llm\models"
-
-REM Start JEV Decision Server on port 1234
-start "JEV Decision Server" llama-server.exe -m "Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf" --port 1234 -c 2048 -t 4 --host 127.0.0.1
-
-REM Start Primary Hermes Model on port 8080
-start "Primary Hermes Server" llama-server.exe -m "Hermes-3-Llama-3.2-3B.Q4_K_M.gguf" --port 8080 -c 2048 -t 4 --host 127.0.0.1
-```
+| `Hermes-3-Llama-3.2-3B.Q4_K_M.gguf` | Primary Generative LLM & Chat Agent | `8080` | `2048` – `4096` | `4` | ~2.5 GB |
+| `Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf` | Decision Router & DSH Logprob Engine | `1234` | `2048` | `4` | ~1.6 GB |
+| `Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf` | Solo 7B Mode (Optional) | `8080` | `4096` | `4` | ~4.8 GB |
 
 ---
 
-## Quick Start
+## CLI & Verification Commands
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/AlexSheff/Obsidian-Local-LLM-Pipeline.git
-   cd Obsidian-Local-LLM-Pipeline
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Start the application (Development)**:
-   ```bash
-   npm run dev
-   ```
-   Open `http://127.0.0.1:3000` in your web browser.
-
-4. **Run tests**:
-   ```bash
-   npm test
-   ```
-   Runs the full Vitest suite (**96 tests passing across 12 test suites** covering security regressions R1–R8, live two-tier hierarchical routing `D-LIVE`, structured LLM generation & review quarantine, empirical calibration gate, hypergraph primitives, DNA logic, Oracle predictions, tokens registry, language detection, frontmatter, directory revisor, and safety snapshots).
-
----
-
-## Development & Verification
-
-- `npm run lint` &mdash; TypeScript typecheck (`tsc --noEmit`).
-- `npm test` &mdash; Execute full Vitest suite (12 test suites, 96 tests).
-- `npm run build` &mdash; Bundle frontend with Vite and compile Node.js server (`dist/server.cjs`) with esbuild.
-- `npm start` &mdash; Run compiled production server on `http://127.0.0.1:3000`.
+| Command | Description |
+| :--- | :--- |
+| `npm run dev` | Start full-stack Express + Vite development server on `http://127.0.0.1:3000`. |
+| `npm run build` | Bundle frontend with Vite and compile Node.js server (`dist/server.cjs`). |
+| `npm start` | Run compiled production server on `http://127.0.0.1:3000`. |
+| `npm run lint` | Run TypeScript typecheck (`tsc --noEmit`). |
+| `npm test` | Run the complete Vitest suite (**101 tests passing across 12 test suites**). |
+| `npm run calibrate` | Evaluate empirical routing accuracy on vault notes and write `99_System/index/thresholds.json`. |
+| `npm run hypergraph:bootstrap -- --vault <path>` | Full vault pass: token extraction, DNA logic, and hypergraph generation. |
+| `npm run hypergraph:report -- --vault <path>` | Generate hypergraph analytics report in `99_System/hypergraph/_Report.md`. |
+| `npm run hypergraph:gc -- --vault <path>` | Prune zero-evidence edges and orphan tokens with snapshot backup. |
 
 ---
 
