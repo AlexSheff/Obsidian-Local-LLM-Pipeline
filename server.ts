@@ -15,7 +15,14 @@ import {
   sanitizeTagList,
   curateOrthogonalTags,
   loadVaultTagTaxonomy,
-  saveVaultTagTaxonomy
+  saveVaultTagTaxonomy,
+  loadVaultTagTaxonomyConfig,
+  saveVaultTagTaxonomyConfig,
+  parseTagTaxonomyImport,
+  exportTagTaxonomyToMarkdown,
+  inferProjectFromNoteAndTaxonomy,
+  resolveDirectoryFromTags,
+  VaultTagTaxonomyConfig
 } from './src/server/tags';
 import { sanitizeTitle } from './src/server/sanitize';
 import { createSnapshotSession, restoreSnapshotSession, SnapshotSession } from './src/server/snapshot';
@@ -3775,52 +3782,205 @@ app.post('/api/vault/note/create', async (req, res) => {
   }
 });
 
+let inMemoryTaxonomyOverride: VaultTagTaxonomyConfig | null = null;
+
+async function getActiveVaultTaxonomyConfig(): Promise<VaultTagTaxonomyConfig> {
+  const hasVault = Boolean(currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath));
+  if (hasVault) {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    return loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+  }
+  if (inMemoryTaxonomyOverride) {
+    return inMemoryTaxonomyOverride;
+  }
+  return loadVaultTagTaxonomyConfig(undefined, []);
+}
+
 app.get('/api/tags/taxonomy', async (req, res) => {
   try {
-    const projects = currentConfig.vaultPath
-      ? await loadProjectsRegistry(currentConfig.vaultPath)
-      : [];
-    const axes = await loadVaultTagTaxonomy(currentConfig.vaultPath, projects);
-    res.json({ axes });
+    const cfg = await getActiveVaultTaxonomyConfig();
+    res.json(cfg);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/api/tags/taxonomy', async (req, res) => {
-  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
-    return res.status(400).json({ error: 'Vault path not configured' });
-  }
-  const { action, axisId, tag } = req.body || {};
-  if (!axisId || !tag || !['add', 'remove'].includes(action)) {
-    return res.status(400).json({ error: 'axisId, tag, and action ("add"|"remove") are required' });
+  const { action, axisId, tag, projectProfile, routeTag, targetFolder } = req.body || {};
+  if (!action) {
+    return res.status(400).json({ error: 'action is required' });
   }
 
   try {
-    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
-    const axes = await loadVaultTagTaxonomy(currentConfig.vaultPath, projects);
-    const targetAxis = axes.find(a => a.id === axisId);
-    if (!targetAxis) {
-      return res.status(404).json({ error: `Taxonomy axis "${axisId}" not found` });
-    }
+    const cfg = await getActiveVaultTaxonomyConfig();
 
-    const cleanTag = String(tag).trim().replace(/^#+/, '').trim();
-    if (action === 'add') {
-      const formatted =
-        targetAxis.prefix && !cleanTag.includes('/')
-          ? `${targetAxis.prefix}${cleanTag}`
-          : cleanTag;
-      if (!targetAxis.tags.some(t => t.toLowerCase() === formatted.toLowerCase())) {
-        targetAxis.tags.push(formatted);
+    if (action === 'add' || action === 'remove') {
+      if (!axisId || !tag) {
+        return res.status(400).json({ error: 'axisId and tag are required' });
       }
-      addLog(`[Tag Taxonomy] Added tag "#${formatted}" to ${targetAxis.label}`, 'success');
+      const targetAxis = cfg.axes.find(a => a.id === axisId);
+      if (!targetAxis) {
+        return res.status(404).json({ error: `Taxonomy axis "${axisId}" not found` });
+      }
+      const cleanTag = String(tag).trim().replace(/^#+/, '').trim();
+      if (action === 'add') {
+        const formatted =
+          targetAxis.prefix && !cleanTag.includes('/')
+            ? `${targetAxis.prefix}${cleanTag}`
+            : cleanTag;
+        if (!targetAxis.tags.some(t => t.toLowerCase() === formatted.toLowerCase())) {
+          targetAxis.tags.push(formatted);
+        }
+        if (formatted.toLowerCase().startsWith('project/')) {
+          const pName = formatted.slice('project/'.length);
+          const pRoot = currentConfig.vaultPath ? await detectProjectsRootFolder(currentConfig.vaultPath) : '01_Projects';
+          if (!cfg.projectProfiles.some(p => p.projectTag.toLowerCase() === formatted.toLowerCase())) {
+            cfg.projectProfiles.push({
+              id: pName,
+              projectTag: formatted,
+              targetFolder: `${pRoot}/${pName}`,
+              associatedTags: [formatted],
+              aliases: [pName, pName.replace(/[-_]+/g, ' ')]
+            });
+          }
+          if (!cfg.tagRoutes[formatted]) {
+            cfg.tagRoutes[formatted] = `${pRoot}/${pName}`;
+          }
+        }
+        addLog(`[Tag Taxonomy] Added tag "#${formatted}" to ${targetAxis.label}`, 'success');
+      } else {
+        targetAxis.tags = targetAxis.tags.filter(t => t.toLowerCase() !== cleanTag.toLowerCase());
+        addLog(`[Tag Taxonomy] Removed tag "#${cleanTag}" from ${targetAxis.label}`, 'info');
+      }
+    } else if (action === 'upsert_project_profile' && projectProfile) {
+      const id = String(projectProfile.id || '').trim();
+      const projectTag = String(projectProfile.projectTag || `project/${id}`).trim().replace(/^#+/, '');
+      const pRoot = currentConfig.vaultPath ? await detectProjectsRootFolder(currentConfig.vaultPath) : '01_Projects';
+      const folder = String(projectProfile.targetFolder || `${pRoot}/${id}`).trim();
+      const associatedTags = Array.isArray(projectProfile.associatedTags)
+        ? projectProfile.associatedTags.map((t: unknown) => String(t).trim().replace(/^#+/, '')).filter(Boolean)
+        : [projectTag];
+      if (!associatedTags.some((t: string) => t.toLowerCase() === projectTag.toLowerCase())) {
+        associatedTags.unshift(projectTag);
+      }
+      const aliases = Array.isArray(projectProfile.aliases)
+        ? projectProfile.aliases.map((a: unknown) => String(a).trim()).filter(Boolean)
+        : [id, id.replace(/[-_]+/g, ' ')];
+
+      const idx = cfg.projectProfiles.findIndex(p => p.projectTag.toLowerCase() === projectTag.toLowerCase());
+      const updatedProf = { id, projectTag, targetFolder: folder, associatedTags, aliases };
+      if (idx >= 0) {
+        cfg.projectProfiles[idx] = updatedProf;
+      } else {
+        cfg.projectProfiles.push(updatedProf);
+      }
+      cfg.tagRoutes[projectTag] = folder;
+      const projAxis = cfg.axes.find(a => a.id === 'project');
+      if (projAxis && !projAxis.tags.some(t => t.toLowerCase() === projectTag.toLowerCase())) {
+        projAxis.tags.push(projectTag);
+      }
+      addLog(`[Tag Taxonomy] Saved project profile "${projectTag}" -> "${folder}" (${associatedTags.length} tags)`, 'success');
+    } else if (action === 'remove_project_profile' && tag) {
+      const clean = String(tag).trim().replace(/^#+/, '').toLowerCase();
+      cfg.projectProfiles = cfg.projectProfiles.filter(p => p.projectTag.toLowerCase() !== clean && p.id.toLowerCase() !== clean);
+      addLog(`[Tag Taxonomy] Removed project profile "${tag}"`, 'info');
+    } else if (action === 'set_route' && routeTag && targetFolder) {
+      const cleanTag = String(routeTag).trim().replace(/^#+/, '');
+      const cleanFolder = String(targetFolder).trim().replace(/^\/+|\/+$/g, '');
+      cfg.tagRoutes[cleanTag] = cleanFolder;
+      const prof = cfg.projectProfiles.find(p => p.projectTag.toLowerCase() === cleanTag.toLowerCase());
+      if (prof) prof.targetFolder = cleanFolder;
+      addLog(`[Tag Taxonomy] Mapped tag "#${cleanTag}" -> directory "${cleanFolder}"`, 'success');
+    } else if (action === 'remove_route' && routeTag) {
+      const cleanTag = String(routeTag).trim().replace(/^#+/, '');
+      delete cfg.tagRoutes[cleanTag];
+      addLog(`[Tag Taxonomy] Removed custom directory route for "#${cleanTag}"`, 'info');
     } else {
-      targetAxis.tags = targetAxis.tags.filter(t => t.toLowerCase() !== cleanTag.toLowerCase());
-      addLog(`[Tag Taxonomy] Removed tag "#${cleanTag}" from ${targetAxis.label}`, 'info');
+      return res.status(400).json({ error: `Unsupported taxonomy action "${action}"` });
     }
 
-    await saveVaultTagTaxonomy(currentConfig.vaultPath, axes);
-    res.json({ success: true, axes });
+    if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
+      await saveVaultTagTaxonomyConfig(currentConfig.vaultPath, cfg);
+    } else {
+      inMemoryTaxonomyOverride = { ...cfg, updatedAt: new Date().toISOString() };
+    }
+    res.json({ success: true, ...cfg });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tags/taxonomy/import', async (req, res) => {
+  const { content, vaultFilePath, mode = 'merge' } = req.body || {};
+  try {
+    let rawText = typeof content === 'string' ? content : '';
+    if (!rawText && vaultFilePath && currentConfig.vaultPath) {
+      const candidatePath = path.isAbsolute(vaultFilePath)
+        ? vaultFilePath
+        : path.join(currentConfig.vaultPath, vaultFilePath);
+      if (!isPathInsideVault(candidatePath, currentConfig.vaultPath, false) || !fs.existsSync(candidatePath)) {
+        return res.status(404).json({ error: `File "${vaultFilePath}" not found inside vault` });
+      }
+      rawText = await fsPromises.readFile(candidatePath, 'utf-8');
+    }
+
+    if (!rawText || !rawText.trim()) {
+      return res.status(400).json({ error: 'Tag list content or valid vaultFilePath is required for import' });
+    }
+
+    const existingConfig = await getActiveVaultTaxonomyConfig();
+    const projectsRoot = currentConfig.vaultPath
+      ? await detectProjectsRootFolder(currentConfig.vaultPath)
+      : '01_Projects';
+
+    const parsed = parseTagTaxonomyImport(rawText, {
+      existingConfig,
+      mode: mode === 'replace' ? 'replace' : 'merge',
+      projectsRoot
+    });
+
+    const newConfig: VaultTagTaxonomyConfig = {
+      updatedAt: new Date().toISOString(),
+      axes: parsed.axes,
+      projectProfiles: parsed.projectProfiles,
+      tagRoutes: parsed.tagRoutes
+    };
+
+    if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
+      await saveVaultTagTaxonomyConfig(currentConfig.vaultPath, newConfig);
+    } else {
+      inMemoryTaxonomyOverride = newConfig;
+    }
+
+    addLog(
+      `[Tag Taxonomy Import] Imported ${parsed.importedTagsCount} new tag(s) and updated ${parsed.importedProjectsCount} project profile(s) (mode: ${mode}).`,
+      'success'
+    );
+
+    res.json({
+      success: true,
+      importedTagsCount: parsed.importedTagsCount,
+      importedProjectsCount: parsed.importedProjectsCount,
+      ...newConfig,
+      message: `Imported ${parsed.importedTagsCount} new tag(s) and ${parsed.importedProjectsCount} project profile(s).`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Failed to import tag taxonomy: ${err.message}` });
+  }
+});
+
+app.get('/api/tags/taxonomy/export', async (req, res) => {
+  try {
+    const cfg = await getActiveVaultTaxonomyConfig();
+    const format = String(req.query.format || 'md').toLowerCase();
+    const markdown = exportTagTaxonomyToMarkdown(cfg);
+    res.json({
+      format,
+      filename: format === 'json' ? 'tag_taxonomy.json' : 'project-hashtags-expanded.md',
+      markdown,
+      taxonomy: cfg
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -3830,9 +3990,11 @@ app.post('/api/vault/note/tags', async (req, res) => {
   if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
     return res.status(400).json({ error: 'Vault path not configured' });
   }
-  const { path: relPath, action, tag, tags } = req.body || {};
-  if (!relPath || !['add', 'remove', 'redefine', 'set'].includes(action)) {
-    return res.status(400).json({ error: 'path and valid action ("add"|"remove"|"redefine"|"set") required' });
+  const { path: relPath, action, tag, tags, routeByTags } = req.body || {};
+  if (!relPath || !['add', 'remove', 'redefine', 'redefine_and_route', 'set'].includes(action)) {
+    return res.status(400).json({
+      error: 'path and valid action ("add"|"remove"|"redefine"|"redefine_and_route"|"set") required'
+    });
   }
 
   const fullPath = path.join(currentConfig.vaultPath, relPath);
@@ -3848,7 +4010,15 @@ app.post('/api/vault/note/tags', async (req, res) => {
       { allowSingleLetter: false }
     );
 
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+    const folderRel = path.dirname(relPath).replace(/\\/g, '/');
+    const noteTitle = String(parsed.data.title || path.basename(fullPath, '.md'));
+
     let updatedTags: string[] = [...currentTags];
+    let matchedProject: string | null = null;
+
     if (action === 'add' && tag) {
       const clean = String(tag).trim().replace(/^#+/, '').trim();
       updatedTags = sanitizeTagList([...currentTags, clean], { allowSingleLetter: false });
@@ -3857,16 +4027,37 @@ app.post('/api/vault/note/tags', async (req, res) => {
       updatedTags = currentTags.filter(t => t.toLowerCase() !== cleanLower);
     } else if (action === 'set' && Array.isArray(tags)) {
       updatedTags = sanitizeTagList(tags.map(String), { allowSingleLetter: false });
-    } else if (action === 'redefine') {
-      const projects = await loadProjectsRegistry(currentConfig.vaultPath);
-      const folderRel = path.dirname(relPath).replace(/\\/g, '/');
+    } else if (action === 'redefine' || action === 'redefine_and_route') {
+      const inlineAndFmTags = extractTags(
+        parsed.hadFrontmatter ? serializeNote(parsed.data, '') : '',
+        parsed.body,
+        path.basename(fullPath)
+      );
+      const mergedRawTags = Array.from(new Set([...currentTags, ...inlineAndFmTags]));
+      const projInf = inferProjectFromNoteAndTaxonomy({
+        filename: path.basename(fullPath),
+        title: noteTitle,
+        body: parsed.body,
+        existingTags: mergedRawTags,
+        folder: folderRel === '.' ? '' : folderRel,
+        discoveredProjects: projects,
+        projectProfiles: taxonomyCfg.projectProfiles,
+        projectsRoot
+      });
+      if (projInf.matchedProfile) {
+        matchedProject = projInf.matchedProfile.id;
+        parsed.data.project = `[[${projInf.matchedProfile.id}]]`;
+      }
+
       updatedTags = curateOrthogonalTags({
-        rawTags: currentTags,
-        title: String(parsed.data.title || path.basename(fullPath, '.md')),
+        rawTags: mergedRawTags,
+        title: noteTitle,
         filename: path.basename(fullPath),
         body: parsed.body,
         folder: folderRel === '.' ? '' : folderRel,
         discoveredProjects: projects,
+        projectProfiles: taxonomyCfg.projectProfiles,
+        customAxes: taxonomyCfg.axes,
         replaceExisting: true,
         maxTags: 9
       });
@@ -3874,25 +4065,123 @@ app.post('/api/vault/note/tags', async (req, res) => {
     }
 
     parsed.data.tags = updatedTags;
-    const serialized = serializeNote(parsed.data, parsed.body);
-    await fsPromises.writeFile(fullPath, serialized, 'utf-8');
-    addLog(`[Note Tags] (${action}) on "${relPath}" -> [${updatedTags.join(', ')}]`, 'success');
-    res.json({ success: true, path: relPath, tags: updatedTags });
+
+    let finalRelPath = relPath.replace(/\\/g, '/');
+    let movedToFolder: string | null = null;
+
+    if (action === 'redefine_and_route' || routeByTags) {
+      const routeDecision = resolveDirectoryFromTags({
+        tags: updatedTags,
+        projectProfiles: taxonomyCfg.projectProfiles,
+        discoveredProjects: projects,
+        tagRoutes: taxonomyCfg.tagRoutes,
+        projectsRoot
+      });
+      const cleanTarget = routeDecision.targetFolder.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+      if (routeDecision.matchedProjectId && !matchedProject) {
+        matchedProject = routeDecision.matchedProjectId;
+        parsed.data.project = `[[${routeDecision.matchedProjectId}]]`;
+      }
+      parsed.data.category = cleanTarget;
+      parsed.data.ai_refined = true;
+
+      const serialized = serializeNote(parsed.data, parsed.body);
+      await fsPromises.writeFile(fullPath, serialized, 'utf-8');
+
+      const currentDirNorm = (folderRel === '.' ? '' : folderRel).toLowerCase();
+      if (cleanTarget && cleanTarget.toLowerCase() !== currentDirNorm) {
+        const destDir = path.join(currentConfig.vaultPath, cleanTarget);
+        if (isPathInsideVault(destDir, currentConfig.vaultPath)) {
+          await fsPromises.mkdir(destDir, { recursive: true });
+          const filename = path.basename(fullPath);
+          let destPath = path.join(destDir, filename);
+          let counter = 1;
+          while (fs.existsSync(destPath) && path.resolve(destPath) !== path.resolve(fullPath)) {
+            const ext = path.extname(filename);
+            const base = path.basename(filename, ext);
+            destPath = path.join(destDir, `${base} ${counter}${ext}`);
+            counter++;
+          }
+          if (path.resolve(fullPath) !== path.resolve(destPath)) {
+            const oldDir = path.dirname(fullPath);
+            await fsPromises.rename(fullPath, destPath);
+            await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
+            finalRelPath = path.relative(currentConfig.vaultPath, destPath).replace(/\\/g, '/');
+            movedToFolder = cleanTarget;
+            triageManager.syncRefinedFile(fullPath, destPath, cleanTarget, path.basename(destPath));
+          }
+        }
+      }
+      addLog(
+        `[Tag Project Router] "${path.basename(fullPath)}" -> project=${matchedProject || 'general'}, folder="${cleanTarget}", tags=[${updatedTags.join(', ')}]`,
+        'success'
+      );
+    } else {
+      const serialized = serializeNote(parsed.data, parsed.body);
+      await fsPromises.writeFile(fullPath, serialized, 'utf-8');
+      addLog(`[Note Tags] (${action}) on "${relPath}" -> [${updatedTags.join(', ')}]`, 'success');
+    }
+
+    res.json({
+      success: true,
+      path: finalRelPath,
+      newRelativePath: finalRelPath,
+      movedToFolder,
+      matchedProject,
+      tags: updatedTags
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/vault/tags/reclassify-all', async (req, res) => {
+const handleClassifyTagsAndRouteVault = async (req: express.Request, res: express.Response) => {
   if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
     return res.status(400).json({ error: 'Vault path not configured' });
   }
 
+  const dryRun = Boolean(req.body?.dryRun);
+  const routeFiles =
+    req.body?.routeFiles !== undefined
+      ? Boolean(req.body.routeFiles)
+      : req.path.includes('classify-and-route');
+  const folderFilter = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
+
   try {
     const projects = await loadProjectsRegistry(currentConfig.vaultPath);
-    const allFiles = await getFilesRecursively(currentConfig.vaultPath, [], true, false);
-    const snapshot = createSnapshotSession(currentConfig.vaultPath, 'orthogonal_tag_reclassify');
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+
+    const scanRoot =
+      folderFilter && folderFilter !== 'all' && folderFilter !== 'Whole Vault'
+        ? path.join(currentConfig.vaultPath, folderFilter)
+        : currentConfig.vaultPath;
+
+    if (!isPathInsideVault(scanRoot, currentConfig.vaultPath, true) || !fs.existsSync(scanRoot)) {
+      return res.status(400).json({ error: 'Invalid target scan folder' });
+    }
+
+    const allFiles = await getFilesRecursively(scanRoot, [], true, false);
+    const snapshot = !dryRun
+      ? createSnapshotSession(currentConfig.vaultPath, 'taxonomy_project_tag_route')
+      : null;
+
     let updatedCount = 0;
+    let movedCount = 0;
+    let projectsMatchedCount = 0;
+    const affectedDirs = new Set<string>();
+    const items: Array<{
+      filename: string;
+      oldPath: string;
+      newPath: string;
+      currentFolder: string;
+      targetFolder: string;
+      matchedProject: string | null;
+      matchedByTag: string | null;
+      oldTags: string[];
+      updatedTags: string[];
+      moved: boolean;
+    }> = [];
 
     for (const filePath of allFiles) {
       try {
@@ -3900,42 +4189,176 @@ app.post('/api/vault/tags/reclassify-all', async (req, res) => {
         const parsed = parseNote(content);
         if (!parsed.body.trim()) continue;
 
-        await snapshot.backup(filePath);
+        const ghost = checkGhostNote(parsed.body);
+        if (ghost.isGhost) continue;
+
         const rel = path.relative(currentConfig.vaultPath, filePath).replace(/\\/g, '/');
         const folderRel = path.dirname(rel).replace(/\\/g, '/');
-        const currentTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+        const currentFolder = folderRel === '.' ? '' : folderRel;
+        const filename = path.basename(filePath);
+        const noteTitle = String(parsed.data.title || path.basename(filePath, '.md'));
 
-        const curated = curateOrthogonalTags({
-          rawTags: currentTags,
-          title: String(parsed.data.title || path.basename(filePath, '.md')),
-          filename: path.basename(filePath),
+        const fmTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+        const inlineTags = extractTags(
+          parsed.hadFrontmatter ? serializeNote(parsed.data, '') : '',
+          parsed.body,
+          filename
+        );
+        const combinedRawTags = Array.from(new Set([...fmTags, ...inlineTags]));
+
+        // 1. Determine Project Affiliation from Tags, Aliases, and Content
+        const projInference = inferProjectFromNoteAndTaxonomy({
+          filename,
+          title: noteTitle,
           body: parsed.body,
-          folder: folderRel === '.' ? '' : folderRel,
+          existingTags: combinedRawTags,
+          folder: currentFolder,
           discoveredProjects: projects,
+          projectProfiles: taxonomyCfg.projectProfiles,
+          projectsRoot
+        });
+
+        // 2. Curate Orthogonal Taxonomy Tags (L0-L7) + Project Tags
+        const curated = curateOrthogonalTags({
+          rawTags: combinedRawTags,
+          title: noteTitle,
+          filename,
+          body: parsed.body,
+          folder: currentFolder,
+          discoveredProjects: projects,
+          projectProfiles: taxonomyCfg.projectProfiles,
+          customAxes: taxonomyCfg.axes,
           replaceExisting: true,
           maxTags: 9
         });
-        parsed.data.tags = ensureLanguageTags(curated, parsed.body, path.basename(filePath));
-        const serialized = serializeNote(parsed.data, parsed.body);
-        await fsPromises.writeFile(filePath, serialized, 'utf-8');
-        updatedCount++;
+        const finalTags = ensureLanguageTags(curated, parsed.body, filename);
+
+        // 3. Determine Target Directory from Updated Tags
+        const routeDecision = resolveDirectoryFromTags({
+          tags: finalTags,
+          projectProfiles: taxonomyCfg.projectProfiles,
+          discoveredProjects: projects,
+          tagRoutes: taxonomyCfg.tagRoutes,
+          projectsRoot,
+          fallbackFolder: currentFolder || '03_Knowledge/Essays'
+        });
+
+        const matchedProject =
+          projInference.matchedProfile?.id || routeDecision.matchedProjectId || null;
+        if (matchedProject) {
+          projectsMatchedCount++;
+        }
+
+        const cleanTargetFolder = routeDecision.targetFolder
+          .replace(/\\/g, '/')
+          .replace(/^\/+|\/+$/g, '');
+        const shouldMoveFile =
+          routeFiles &&
+          Boolean(cleanTargetFolder) &&
+          cleanTargetFolder.toLowerCase() !== currentFolder.toLowerCase();
+
+        let finalNewRelPath = shouldMoveFile ? `${cleanTargetFolder}/${filename}` : rel;
+        let didMove = false;
+
+        if (!dryRun && snapshot) {
+          await snapshot.backup(filePath);
+          parsed.data.tags = finalTags;
+          if (matchedProject) {
+            parsed.data.project = `[[${matchedProject}]]`;
+          }
+          if (routeFiles && cleanTargetFolder) {
+            parsed.data.category = cleanTargetFolder;
+            parsed.data.ai_refined = true;
+          }
+          const serialized = serializeNote(parsed.data, parsed.body);
+          await fsPromises.writeFile(filePath, serialized, 'utf-8');
+          updatedCount++;
+
+          if (shouldMoveFile) {
+            const destDir = path.join(currentConfig.vaultPath, cleanTargetFolder);
+            if (isPathInsideVault(destDir, currentConfig.vaultPath)) {
+              await fsPromises.mkdir(destDir, { recursive: true });
+              let destPath = path.join(destDir, filename);
+              let counter = 1;
+              while (fs.existsSync(destPath) && path.resolve(destPath) !== path.resolve(filePath)) {
+                const ext = path.extname(filename);
+                const base = path.basename(filename, ext);
+                destPath = path.join(destDir, `${base} ${counter}${ext}`);
+                counter++;
+              }
+              if (path.resolve(filePath) !== path.resolve(destPath)) {
+                affectedDirs.add(path.dirname(filePath));
+                await fsPromises.rename(filePath, destPath);
+                triageManager.syncRefinedFile(filePath, destPath, cleanTargetFolder, path.basename(destPath));
+                finalNewRelPath = path.relative(currentConfig.vaultPath, destPath).replace(/\\/g, '/');
+                movedCount++;
+                didMove = true;
+              }
+            }
+          }
+        } else {
+          updatedCount++;
+          if (shouldMoveFile) {
+            movedCount++;
+            didMove = true;
+          }
+        }
+
+        items.push({
+          filename,
+          oldPath: rel,
+          newPath: finalNewRelPath,
+          currentFolder: currentFolder || 'Root',
+          targetFolder: cleanTargetFolder || currentFolder || 'Root',
+          matchedProject,
+          matchedByTag: routeDecision.matchedByTag,
+          oldTags: fmTags,
+          updatedTags: finalTags,
+          moved: didMove
+        });
+      } catch {}
+    }
+
+    let prunedFoldersCount = 0;
+    if (!dryRun && routeFiles) {
+      for (const dir of affectedDirs) {
+        try {
+          const removed = await pruneEmptyParentDirs(currentConfig.vaultPath, dir);
+          prunedFoldersCount += removed.length;
+        } catch {}
+      }
+      try {
+        const swept = await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+        prunedFoldersCount += swept.length;
       } catch {}
     }
 
     addLog(
-      `[Orthogonal Tag Taxonomy] Reclassified tags across ${updatedCount} notes into multi-level L0–L7 taxonomy (Snapshot: ${snapshot.sessionId}).`,
+      `[Tag Project Router${dryRun ? ' DRY-RUN' : ''}] Evaluated ${updatedCount} notes: ${projectsMatchedCount} matched to projects, ${movedCount} ${dryRun ? 'to move' : 'moved to target directories'}${prunedFoldersCount > 0 ? `, ${prunedFoldersCount} empty folders pruned` : ''}.`,
       'success'
     );
+
     res.json({
       success: true,
+      dryRun,
+      totalScanned: items.length,
       updatedCount,
-      snapshotId: snapshot.sessionId,
-      message: `Normalized tags on ${updatedCount} notes to Orthogonal Taxonomy (L0–L7).`
+      projectsMatchedCount,
+      movedCount,
+      prunedFoldersCount,
+      snapshotId: snapshot?.sessionId || null,
+      items: items.slice(0, 250),
+      message: dryRun
+        ? `Preview complete: ${updatedCount} notes analyzed, ${projectsMatchedCount} matched to projects, ${movedCount} will be moved to directories by tags.`
+        : `Updated tags on ${updatedCount} notes (${projectsMatchedCount} matched to projects) and routed ${movedCount} files to their target directories.`
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
-});
+};
+
+app.post('/api/vault/tags/reclassify-all', handleClassifyTagsAndRouteVault);
+app.post('/api/vault/tags/classify-and-route', handleClassifyTagsAndRouteVault);
 
 app.post('/api/vault/note/refine-single', async (req, res) => {
   if (!currentConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });

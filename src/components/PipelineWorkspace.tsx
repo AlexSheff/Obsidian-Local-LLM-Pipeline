@@ -9,13 +9,15 @@ import {
   Copy,
   AlertCircle,
   Share2,
-  Sparkles
+  Sparkles,
+  Tag
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import DirectoryRevisor from './DirectoryRevisor';
 import DuplicateCleaner from './DuplicateCleaner';
 import { TriagePanel } from './TriagePanel';
 import { HypergraphWorkspace } from './HypergraphWorkspace';
+import { TagTaxonomyWorkspace } from './TagTaxonomyWorkspace';
 
 interface LogEntry {
   timestamp: string;
@@ -69,7 +71,7 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
   const [purgingGhosts, setPurgingGhosts] = useState(false);
   const [runningUnified, setRunningUnified] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState<
-    'overview' | 'triage' | 'revisor' | 'duplicates' | 'hypergraph'
+    'overview' | 'tags' | 'triage' | 'revisor' | 'duplicates' | 'hypergraph'
   >('overview');
   const [actionFeedback, setActionFeedback] = useState<{
     message: string;
@@ -185,17 +187,22 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
     setNormalizingTags(true);
     setActionFeedback(null);
     try {
-      const res = await axios.post('/api/vault/tags/reclassify-all');
+      const res = await axios.post('/api/vault/tags/classify-and-route', {
+        dryRun: false,
+        routeFiles: true
+      });
+      await fetchVaultStructure();
+      fetchRegistry();
       onRefreshLogs();
       setActionFeedback({
         message:
           res.data?.message ||
-          `Normalized tags on ${res.data?.updatedCount || 0} notes to Orthogonal Taxonomy (L0–L7).`,
+          `Updated tags on ${res.data?.updatedCount || 0} notes (${res.data?.projectsMatchedCount || 0} matched to projects) and routed ${res.data?.movedCount || 0} files to directories.`,
         type: 'success'
       });
     } catch (err: any) {
       setActionFeedback({
-        message: 'Tag normalization failed: ' + (err.response?.data?.error || err.message),
+        message: 'Tag classification & routing failed: ' + (err.response?.data?.error || err.message),
         type: 'error'
       });
     } finally {
@@ -432,12 +439,20 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
+              onClick={() => setActiveToolTab('tags')}
+              className="px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-200 text-xs font-semibold transition-colors flex items-center gap-1.5"
+              title="Import/Export your custom tag list (.md / .json) and manage project hashtag profiles"
+            >
+              <Tag className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Import / Export Tags</span>
+            </button>
+            <button
               onClick={handleNormalizeAllTags}
               disabled={normalizingTags}
               className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium transition-colors"
-              title="Replace noisy word-salad tags across all Vault notes with the Orthogonal Multi-Level Taxonomy (L0–L7)"
+              title="Detect which project each .md file belongs to, update tags (L0–L7), and distribute files into directories according to tags"
             >
-              {normalizingTags ? 'Normalizing Tags...' : 'Normalize All Tags (L0–L7)'}
+              {normalizingTags ? 'Tagging & Routing...' : 'Update Tags & Route by Project'}
             </button>
             <button
               onClick={handleSyncVaultProjects}
@@ -468,6 +483,18 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
             >
               <Activity className="w-3.5 h-3.5 text-emerald-600" />
               <span>Pipeline & Live Logs</span>
+            </button>
+
+            <button
+              onClick={() => setActiveToolTab('tags')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                activeToolTab === 'tags'
+                  ? 'bg-white text-neutral-900 shadow-xs font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <Tag className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Tag Import/Export & Project Router</span>
             </button>
 
             <button
@@ -752,6 +779,17 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {activeToolTab === 'tags' && (
+        <TagTaxonomyWorkspace
+          vaultPath={config.vaultPath}
+          onNotify={() => {
+            fetchVaultStructure();
+            fetchRegistry();
+            onRefreshLogs();
+          }}
+        />
       )}
 
       {activeToolTab === 'triage' && (

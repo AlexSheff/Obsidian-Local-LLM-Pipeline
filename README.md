@@ -1,12 +1,12 @@
-# Obsidian Local LLM Pipeline (v5.0)
+# Obsidian Local LLM Pipeline (v5.1)
 
 An automated, **Vault-Agnostic**, **100% offline** intelligence pipeline and knowledge workspace for **Obsidian** powered by a local dual-model engine (`Jev Decision Router` + `Primary Generative LLM`) via `llama.cpp`.
 
-Designed to run on **any PC and any Obsidian Vault without hardcoded projects or paths**, with strict resource bounds (optimized for 16 GB RAM / 4–6 CPU threads). It dynamically discovers your vault's hierarchy on disk, classifies and routes documents using two-tier logprob + LLM routing, organizes tags using a bounded **Orthogonal Multi-Level Tag Taxonomy (L0–L7)**, prunes empty directories automatically after moves, and provides a **Local AI Knowledge Chat & File Agent** to search, plan, create, edit, and move notes directly from the workspace.
+Designed to run on **any PC and any Obsidian Vault without hardcoded projects or paths**, with strict resource bounds (optimized for 16 GB RAM / 4–6 CPU threads). It dynamically discovers your vault's hierarchy on disk, classifies and routes documents using two-tier logprob + LLM routing, organizes tags using a bounded **Orthogonal Multi-Level Tag Taxonomy (L0–L7)** with **Custom Tag List Import/Export (`.md`, `.json`, `.yaml`)**, automatically detects project affiliation from tags and distributes `.md` files into target directories, prunes empty directories automatically after moves, and provides a **Local AI Knowledge Chat & File Agent** to search, plan, create, edit, and move notes directly from the workspace.
 
 ---
 
-## Key Capabilities in v5.0
+## Key Capabilities in v5.1
 
 ### 1. 100% Dynamic, Vault-Agnostic Architecture (Zero Hardcoding)
 - **On-the-Fly Structure Discovery (`discoverVaultStructure` & `loadProjectsRegistry`)**: Connects to any local Obsidian Vault directory and automatically discovers existing category folders, project roots (`01_Projects/*`), and active tags directly from disk.
@@ -31,6 +31,18 @@ Instead of turning every word in a note into a flat tag, the pipeline enforces a
 | **Relation Axis** | `relation/` | How does it relate to other entities? | `#relation/dependency`, `#relation/component`, `#relation/alternative`, `#relation/extension`, `#relation/integration`, `#relation/conflict` |
 
 - **Strict Garbage-Tag Filtering (`isValidSemanticTag`)**: Automatically strips non-word alphanumeric codes (`#01G23`, `#w3x06`, `#a3ps9`), numeric IDs, and folder prefixes (`#01_Projects`) across YAML frontmatter parsing, extraction, and saving.
+- **Custom Tag List Import & Export (`.md`, `.json`, `.yaml`)**:
+  - Upload or paste your own multi-level tag specification (including Markdown files like `project-hashtags-expanded.md`, JSON, or YAML) in **2. Unified Pipeline & Audits → Tag Import / Export & Routing** with **Merge** or **Replace** modes, and export your active taxonomy and project profiles to `.md` or `.json` in 1 click.
+  - Automatically parses `L0–L7` axes (`#system`, `#type/*`, `#domain/*`, `#project/*`, `#research/*`, `#concept/*`, `#status/*`, `#priority/*`, `#stage/*`, `#knowledge/*`, `#relation/*`) as well as **Project Tag Clusters** (mapping `#project/<Name>` and `#research/<Topic>` to their associated `#system/*`, `#concept/*`, and `#domain/*` tags, bilingual aliases, and target folders).
+- **Automated Project Detection & Tag-Based Directory Distribution (`inferProjectFromNoteAndTaxonomy` + `resolveDirectoryFromTags`)**:
+  - Scans `.md` files across the Vault, determines which project or research direction each note belongs to (by scoring explicit `#project/*` tags, unique project-associated `#concept/*` & `#system/*` tags such as `#concept/World-1149` $\rightarrow$ `Neuromicon` or `#system/agent-orchestration` $\rightarrow$ `Hermes`, and bilingual aliases).
+  - Updates the note's YAML frontmatter (`tags` + `project: "[[ProjectName]]"`) and automatically moves the `.md` file into the corresponding directory according to tag priority:
+    1. `#status/archived` (without `#status/active`) $\rightarrow$ `06_Archive`
+    2. `#project/<Name>` $\rightarrow$ `01_Projects/<Name>` (or custom folder configured in the project profile)
+    3. `#research/<Topic>` $\rightarrow$ `03_Knowledge/Research/<Topic>`
+    4. `#type/idea` $\rightarrow$ `05_Ideas`, `#type/meeting` / `#type/event` $\rightarrow$ `04_Journal`, `#type/scenario` $\rightarrow$ `03_Knowledge/Scripts`, `#type/research` / `#type/whitepaper` $\rightarrow$ `03_Knowledge/Research`
+    5. Domain & subsystem tags (`#domain/AI/*`, `#system/*` $\rightarrow$ `03_Knowledge/Technical`, `#domain/business` $\rightarrow$ `02_Areas/Business`, etc.)
+  - Includes **Preview Classification & Routing (Dry Run)**, **1-Click Snapshot Backup** (`99_System/snapshots/`), and **Automatic Empty Folder Pruning**.
 - **1-Click Interactive UI Controls**:
   - **Quick Remove (`×`)**: Click `×` on any tag in the note editor to immediately remove it from the file.
   - **Interactive L0–L7 Taxonomy Picker**: Toggle tags across any orthogonal axis in 1 click or add custom tags to your vault's taxonomy (`99_System/tag_taxonomy.json`).
@@ -56,7 +68,7 @@ Instead of turning every word in a note into a flat tag, the pipeline enforces a
 ## Unified 3-Tab Workspace
 
 1. **1. Vault Workspace & AI Chat**: Browse and filter documents by folder, language, and tag; edit notes with the interactive **L0–L7 Orthogonal Tag Picker**; and collaborate with the **Local AI Chat & Vault Agent**.
-2. **2. Unified Pipeline & Audits**: Configure your Vault path, initialize PARA directories, run the **Full Auto-Pipeline (Clean + Sort + Prune Empty)**, normalize vault tags, resolve **Ambiguity Triage**, audit folders with **Directory Revisor**, clean duplicates, and explore the **Semantic Hypergraph**.
+2. **2. Unified Pipeline & Audits**: Configure your Vault path, initialize PARA directories, run the **Full Auto-Pipeline (Clean + Sort + Prune Empty)**, manage **Tag Import / Export & Project Routing (`TagTaxonomyWorkspace`)**, resolve **Ambiguity Triage**, audit folders with **Directory Revisor**, clean duplicates, and explore the **Semantic Hypergraph**.
 3. **3. Dual-Model Engine (Jev + LLM)**: Monitor live `llama-server` RAM and context telemetry on ports `1234` and `8080`, switch 16 GB RAM-safe profiles, and generate `.bat` launcher scripts.
 
 ---
@@ -111,7 +123,7 @@ Instead of turning every word in a note into a flat tag, the pipeline enforces a
 | `npm run build` | Bundle frontend with Vite and compile Node.js server (`dist/server.cjs`). |
 | `npm start` | Run compiled production server on `http://127.0.0.1:3000`. |
 | `npm run lint` | Run TypeScript typecheck (`tsc --noEmit`). |
-| `npm test` | Run the complete Vitest suite (**101 tests passing across 12 test suites**). |
+| `npm test` | Run the complete Vitest suite (**106 tests passing across 13 test suites**). |
 | `npm run calibrate` | Evaluate empirical routing accuracy on vault notes and write `99_System/index/thresholds.json`. |
 | `npm run hypergraph:bootstrap -- --vault <path>` | Full vault pass: token extraction, DNA logic, and hypergraph generation. |
 | `npm run hypergraph:report -- --vault <path>` | Generate hypergraph analytics report in `99_System/hypergraph/_Report.md`. |
