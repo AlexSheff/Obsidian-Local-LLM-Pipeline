@@ -6,6 +6,7 @@ export interface SnapshotSession {
   sessionId: string;
   backupDir: string;
   backup(filePath: string): Promise<string | null>;
+  recordMove?(fromFilePath: string, toFilePath: string): Promise<void>;
   backedUpCount(): number;
 }
 
@@ -18,6 +19,7 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
   const sessionId = customSessionId || new Date().toISOString().replace(/:/g, '-');
   const backupDir = path.join(vaultPath, '99_System', '_refine_backup', sessionId);
   const backedUpFiles = new Set<string>();
+  const movedFiles: Array<{ fromRel: string; toRel: string }> = [];
 
   return {
     sessionId,
@@ -45,6 +47,22 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
       backedUpFiles.add(resolvedFile);
       return destBackupPath;
     },
+    async recordMove(fromFilePath: string, toFilePath: string): Promise<void> {
+      const resolvedVault = path.resolve(vaultPath);
+      const fromRel = path.relative(resolvedVault, path.resolve(fromFilePath)).replace(/\\/g, '/');
+      const toRel = path.relative(resolvedVault, path.resolve(toFilePath)).replace(/\\/g, '/');
+      if (fromRel !== toRel && !fromRel.startsWith('..') && !toRel.startsWith('..')) {
+        movedFiles.push({ fromRel, toRel });
+        try {
+          await fsPromises.mkdir(backupDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(backupDir, '_moved_manifest.json'),
+            JSON.stringify(movedFiles, null, 2),
+            'utf-8'
+          );
+        } catch {}
+      }
+    },
     backedUpCount() {
       return backedUpFiles.size;
     }
@@ -69,6 +87,7 @@ export async function restoreSnapshotSession(
   async function walkAndRestore(currentDir: string) {
     const entries = await fsPromises.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
+      if (entry.name === '_moved_manifest.json') continue;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         await walkAndRestore(fullPath);
@@ -87,5 +106,25 @@ export async function restoreSnapshotSession(
   }
 
   await walkAndRestore(backupDir);
+
+  // If files were moved to a different folder during the session, remove the moved copies
+  const manifestPath = path.join(backupDir, '_moved_manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const moves = JSON.parse(await fsPromises.readFile(manifestPath, 'utf-8'));
+      if (Array.isArray(moves)) {
+        for (const m of moves) {
+          if (m?.toRel && m?.fromRel && m.toRel !== m.fromRel) {
+            const movedAbs = path.join(vaultPath, m.toRel);
+            const origAbs = path.join(vaultPath, m.fromRel);
+            if (fs.existsSync(movedAbs) && fs.existsSync(origAbs)) {
+              await fsPromises.unlink(movedAbs).catch(() => {});
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
   return { restoredCount, errors };
 }

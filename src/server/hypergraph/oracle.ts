@@ -93,7 +93,7 @@ export class OracleEngine {
 
     for (const edge of activeEdges) {
       const [t1, t2, t3] = edge.triple;
-      const nodes = [t1, t2, t3].filter(n => n !== 'связано-с');
+      const nodes = [t1, t2, t3].filter(n => n !== '\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441');
 
       for (let i = 0; i < nodes.length; i++) {
         const u = nodes[i];
@@ -133,11 +133,11 @@ export class OracleEngine {
       const nB = neighbors.get(b) || new Set();
 
       for (const z of nA) {
-        if (z === a || z === b || z === 'связано-с') continue;
+        if (z === a || z === b || z === '\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441') continue;
         candidateCounts.set(z, (candidateCounts.get(z) || 0) + 1);
       }
       for (const z of nB) {
-        if (z === a || z === b || z === 'связано-с') continue;
+        if (z === a || z === b || z === '\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441') continue;
         candidateCounts.set(z, (candidateCounts.get(z) || 0) + 1);
       }
 
@@ -155,8 +155,8 @@ export class OracleEngine {
       // Limit candidates to <= 26 for Choice primitive
       const candidates = filteredCandidates.slice(0, 26);
 
-      const state = `Пара понятий в гиперграфе: «${a}» и «${b}». Известные связи: ${Array.from(nA).slice(0, 4).join(', ')}.`;
-      const question = `Учитывая связи «${a}» и «${b}» в графе, какой токен наиболее вероятно образует с ними новую осмысленную связь?`;
+      const state = `\u041f\u0430\u0440\u0430 \u043f\u043e\u043d\u044f\u0442\u0438\u0439 \u0432 \u0433\u0438\u043f\u0435\u0440\u0433\u0440\u0430\u0444\u0435: «${a}» \u0438 «${b}». \u0418\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0435 \u0441\u0432\u044f\u0437\u0438: ${Array.from(nA).slice(0, 4).join(', ')}.`;
+      const question = `\u0423\u0447\u0438\u0442\u044b\u0432\u0430\u044f \u0441\u0432\u044f\u0437\u0438 «${a}» \u0438 «${b}» \u0432 \u0433\u0440\u0430\u0444\u0435, \u043a\u0430\u043a\u043e\u0439 \u0442\u043e\u043a\u0435\u043d \u043d\u0430\u0438\u0431\u043e\u043b\u0435\u0435 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u043e \u043e\u0431\u0440\u0430\u0437\u0443\u0435\u0442 \u0441 \u043d\u0438\u043c\u0438 \u043d\u043e\u0432\u0443\u044e \u043e\u0441\u043c\u044b\u0441\u043b\u0435\u043d\u043d\u0443\u044e \u0441\u0432\u044f\u0437\u044c?`;
 
       try {
         modelCalls++;

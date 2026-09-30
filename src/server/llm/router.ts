@@ -27,8 +27,8 @@ export async function askYesNo(
   question: string,
   opts?: RouterOptions & { lang?: string }
 ): Promise<{ yes: number; no: number; output: DecisionOutput }> {
-  const isRu = (opts?.lang || '').toLowerCase().startsWith('ru') || /[а-яё]/i.test(question);
-  const options = isRu ? ['Да', 'Нет'] : ['Yes', 'No'];
+  const isRu = (opts?.lang || '').toLowerCase().startsWith('ru') || /[\u0430-\u044f\u0451]/i.test(question);
+  const options = isRu ? ['\u0414\u0430', '\u041d\u0435\u0442'] : ['Yes', 'No'];
   const output = await chooseOne(state, question, options, opts);
 
   const yesDecision = output.decisions.find(d => d.letter === 'A');

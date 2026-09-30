@@ -24,14 +24,14 @@ export interface HierarchicalRouterConfig {
 }
 
 // Unicode-escaped Russian keywords for multilingual note matching without raw Cyrillic in source code
-const KW_SPEC = '\u0441\u043f\u0435\u0446\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f'; // спецификация
-const KW_ROADMAP = '\u0440\u043e\u0430\u0434\u043c\u0430\u043f'; // роадмап
-const KW_ARCH = '\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\u0430'; // архитектура
-const KW_PILOT = '\u043f\u0438\u043b\u043e\u0442'; // пилот
-const KW_LAUNCH_PLAN = '\u043f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430'; // план запуска
-const KW_TECH_SPEC = '\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u0437\u0430\u0434\u0430\u043d\u0438\u0435'; // техническое задание
-const KW_PROJ_STRUCT = '\u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430 \u043f\u0440\u043e\u0435\u043a\u0442\u0430'; // структура проекта
-const KW_PROJ_LIST = '\u0441\u043f\u0438\u0441\u043e\u043a \u043f\u0440\u043e\u0435\u043a\u0442\u043e\u0432'; // список проектов
+const KW_SPEC = '\u0441\u043f\u0435\u0446\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f'; // specification
+const KW_ROADMAP = '\u0440\u043e\u0430\u0434\u043c\u0430\u043f'; // roadmap
+const KW_ARCH = '\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\u0430'; // architecture
+const KW_PILOT = '\u043f\u0438\u043b\u043e\u0442'; // pilot
+const KW_LAUNCH_PLAN = '\u043f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430'; // launch plan
+const KW_TECH_SPEC = '\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u0437\u0430\u0434\u0430\u043d\u0438\u0435'; // technical specification
+const KW_PROJ_STRUCT = '\u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430 \u043f\u0440\u043e\u0435\u043a\u0442\u0430'; // project structure
+const KW_PROJ_LIST = '\u0441\u043f\u0438\u0441\u043e\u043a \u043f\u0440\u043e\u0435\u043a\u0442\u043e\u0432'; // project list
 
 const L1_QUESTION = '\u041a \u043a\u0430\u043a\u043e\u0439 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u0438 \u043e\u0442\u043d\u043e\u0441\u0438\u0442\u0441\u044f \u044d\u0442\u0430 \u0437\u0430\u043c\u0435\u0442\u043a\u0430?';
 const L2_PROJECT_QUESTION = '\u041a \u043a\u0430\u043a\u043e\u043c\u0443 \u043f\u0440\u043e\u0435\u043a\u0442\u0443 \u043e\u0442\u043d\u043e\u0441\u0438\u0442\u0441\u044f \u044d\u0442\u0430 \u0437\u0430\u043c\u0435\u0442\u043a\u0430?';
@@ -205,7 +205,7 @@ export function extractExplicitProjectName(filename: string, title: string): str
   const cleanTitle = (title || '').replace(/[_]+/g, ' ').trim();
   const combined = `${cleanFile} ${cleanTitle}`;
 
-  // 1. Match explicit patterns like "проект <Name>", "Project <Name>", "ассистент <Name>", "платформа <Name>"
+  // 1. Match explicit patterns like "Project <Name>", "Assistant <Name>", "Platform <Name>"
   const explicitMatch = new RegExp(
     '(?:\\u043f\\u0440\\u043e\\u0435\\u043a\\u0442[\\u0430\\u0443\\u0435\\u043e\\u043c]?|project|\\u0430\\u0441\\u0441\\u0438\\u0441\\u0442\\u0435\\u043d\\u0442[\\u0430\\u0443]?|\\u043f\\u043b\\u0430\\u0442\\u0444\\u043e\\u0440\\u043c[\\u0430\\u044b]|\\u0441\\u0438\\u0441\\u0442\\u0435\\u043c[\\u0430\\u044b]|\\u043f\\u0440\\u043e\\u0434\\u0443\\u043a\\u0442[\\u0430\\u0443]?)\\s+([A-Z\\u0410-\\u042f\\u0401][A-Za-z\\u0410-\\u042f\\u0430-\\u044f\\u0401\\u04510-9_-]{2,20})'
   ).exec(combined);
@@ -229,7 +229,7 @@ export function extractExplicitProjectName(filename: string, title: string): str
       'plan',
       'launch'
     ]);
-    // Any all-uppercase acronym (2..12 chars) after "проект / ассистент / Project" is a valid project code
+    // Any all-uppercase acronym (2..12 chars) after "Project / Assistant" is a valid project code
     if (/^[A-Z\u0410-\u042f\u04010-9_-]{2,12}$/.test(candidate) && !stopWords.has(candidate.toLowerCase())) {
       return candidate;
     }
@@ -496,7 +496,7 @@ export function preserveMeaningfulTitle(
     cleanOrig.length > 75 ||
     cleanOrig.length < 3;
 
-  // If original filename ends with a series number (e.g. "Part 8", "Выпуск 8") that the LLM stripped out, preserve it
+  // If original filename ends with a series number (e.g. "Part 8", "Issue 8") that the LLM stripped out, preserve it
   const seriesMatch = cleanOrig.match(/\b(\d{1,3})\b$/);
   if (seriesMatch && !llmTitle.includes(seriesMatch[1]) && !isNoisyOriginal) {
     return cleanOrig;

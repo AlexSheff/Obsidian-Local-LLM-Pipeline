@@ -31,39 +31,39 @@ export interface VaultTagTaxonomyConfig {
 export const DEFAULT_PROJECT_TAG_PROFILES: ProjectTagProfile[] = [
   {
     id: 'Hermes',
-    projectTag: 'project/Hermes',
+    projectTag: 'Hermes',
     targetFolder: '01_Projects/Hermes',
     associatedTags: [
-      'project/Hermes',
-      'system/agent-orchestration',
-      'system/multi-agent',
-      'system/memory',
-      'system/routing',
-      'system/local-LLM',
-      'system/free-API',
-      'system/protocol',
-      'domain/AI/agents',
-      'domain/AI/LLM',
-      'domain/AI/local'
+      'Hermes',
+      'agent-orchestration',
+      'multi-agent',
+      'memory',
+      'routing',
+      'local-LLM',
+      'free-API',
+      'protocol',
+      'agents',
+      'LLM',
+      'local-AI'
     ],
-    aliases: ['Hermes', 'Гермес', 'Hermes Agent', 'agent-orchestration', 'multi-agent']
+    aliases: ['Hermes', '\u0413\u0435\u0440\u043c\u0435\u0441', 'Hermes Agent', 'agent-orchestration', 'multi-agent']
   },
   {
     id: 'Obsidian-LLM-Pipeline',
-    projectTag: 'project/Obsidian-LLM-Pipeline',
+    projectTag: 'Obsidian-LLM-Pipeline',
     targetFolder: '01_Projects/Obsidian-LLM-Pipeline',
     associatedTags: [
-      'project/Obsidian-LLM-Pipeline',
-      'system/semantic-ingestion',
-      'system/tagging',
-      'system/classification',
-      'system/file-routing',
-      'system/registry',
-      'system/queue',
-      'system/watchdog',
-      'domain/knowledge-management',
-      'domain/AI/local',
-      'domain/semantics'
+      'Obsidian-LLM-Pipeline',
+      'semantic-ingestion',
+      'tagging',
+      'classification',
+      'file-routing',
+      'registry',
+      'queue',
+      'watchdog',
+      'knowledge-management',
+      'local-AI',
+      'semantics'
     ],
     aliases: [
       'Obsidian-LLM-Pipeline',
@@ -76,232 +76,227 @@ export const DEFAULT_PROJECT_TAG_PROFILES: ProjectTagProfile[] = [
   },
   {
     id: 'Neuromicon',
-    projectTag: 'project/Neuromicon',
+    projectTag: 'Neuromicon',
     targetFolder: '01_Projects/Neuromicon',
     associatedTags: [
-      'project/Neuromicon',
-      'concept/World-1149',
-      'concept/Protocol-Contact',
-      'concept/24+1',
-      'concept/Defragmentation',
-      'concept/E=M×C²',
-      'system/transmedia',
-      'system/ARG',
-      'domain/transmedia',
-      'domain/ARG',
-      'domain/storytelling',
-      'domain/film'
+      'Neuromicon',
+      'World-1149',
+      'Protocol-Contact',
+      '24+1',
+      'Defragmentation',
+      'E=M×C²',
+      'transmedia',
+      'ARG',
+      'storytelling',
+      'film'
     ],
     aliases: [
       'Neuromicon',
-      'Нейромикон',
+      '\u041d\u0435\u0439\u0440\u043e\u043c\u0438\u043a\u043e\u043d',
       'World-1149',
-      'Мир 1149',
+      '\u041c\u0438\u0440 1149',
       'Protocol-Contact',
-      'Протокол Контакт',
+      '\u041f\u0440\u043e\u0442\u043e\u043a\u043e\u043b \u041a\u043e\u043d\u0442\u0430\u043a\u0442',
       'Defragmentation',
-      'Дефрагментация',
+      '\u0414\u0435\u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0430\u0446\u0438\u044f',
       '24+1',
       'E=M×C²'
     ]
   },
   {
     id: 'UUCPFF',
-    projectTag: 'project/UUCPFF',
+    projectTag: 'UUCPFF',
     targetFolder: '01_Projects/UUCPFF',
     associatedTags: [
-      'project/UUCPFF',
-      'system/film-festival',
-      'system/creator-network',
-      'system/film-submission',
-      'system/curation',
-      'system/distribution',
-      'domain/film',
-      'domain/creative',
-      'domain/community'
+      'UUCPFF',
+      'film-festival',
+      'creator-network',
+      'film-submission',
+      'curation',
+      'distribution',
+      'film',
+      'creative',
+      'community'
     ],
-    aliases: ['UUCPFF', 'film-festival', 'creator-network', 'film-submission', 'кинофестиваль']
+    aliases: ['UUCPFF', 'film-festival', 'creator-network', 'film-submission', '\u043a\u0438\u043d\u043e\u0444\u0435\u0441\u0442\u0438\u0432\u0430\u043b\u044c']
   },
   {
     id: 'Escape2Reality',
-    projectTag: 'project/Escape2Reality',
+    projectTag: 'Escape2Reality',
     targetFolder: '01_Projects/Escape2Reality',
     associatedTags: [
-      'project/Escape2Reality',
-      'system/transmedia',
-      'system/ARG',
-      'domain/transmedia',
-      'domain/ARG',
-      'domain/creative',
-      'domain/storytelling'
+      'Escape2Reality',
+      'transmedia',
+      'ARG',
+      'creative',
+      'storytelling'
     ],
-    aliases: ['Escape2Reality', 'Escape to Reality', 'Эскейп']
+    aliases: ['Escape2Reality', 'Escape to Reality', '\u042d\u0441\u043a\u0435\u0439\u043f']
   },
   {
     id: 'Engineering-Intelligence',
-    projectTag: 'project/Engineering-Intelligence',
+    projectTag: 'Engineering-Intelligence',
     targetFolder: '01_Projects/Engineering-Intelligence',
     associatedTags: [
-      'project/Engineering-Intelligence',
-      'domain/AI',
-      'domain/semantics',
-      'domain/ontology',
-      'domain/knowledge',
-      'domain/information-theory'
+      'Engineering-Intelligence',
+      'AI',
+      'semantics',
+      'ontology',
+      'knowledge',
+      'information-theory'
     ],
-    aliases: ['Engineering-Intelligence', 'Engineering Intelligence', 'Инженерный интеллект']
+    aliases: ['Engineering-Intelligence', 'Engineering Intelligence', '\u0418\u043d\u0436\u0435\u043d\u0435\u0440\u043d\u044b\u0439 \u0438\u043d\u0442\u0435\u043b\u043b\u0435\u043a\u0442']
   },
   {
     id: 'Restore-Dumaguete',
-    projectTag: 'project/Restore-Dumaguete',
+    projectTag: 'Restore-Dumaguete',
     targetFolder: '01_Projects/Restore-Dumaguete',
     associatedTags: [
-      'project/Restore-Dumaguete',
-      'domain/community',
-      'domain/society',
-      'domain/operations',
-      'domain/governance',
-      'status/paused'
+      'Restore-Dumaguete',
+      'community',
+      'society',
+      'operations',
+      'governance',
+      'paused'
     ],
-    aliases: ['Restore-Dumaguete', 'Restore Dumaguete', 'Dumaguete', 'Думагете']
+    aliases: ['Restore-Dumaguete', 'Restore Dumaguete', 'Dumaguete', '\u0414\u0443\u043c\u0430\u0433\u0435\u0442\u0435']
   },
   {
     id: 'TOTEM',
-    projectTag: 'project/TOTEM',
+    projectTag: 'TOTEM',
     targetFolder: '01_Projects/TOTEM',
     associatedTags: [
-      'project/TOTEM',
-      'domain/creative',
-      'domain/storytelling',
-      'domain/philosophy',
-      'domain/transmedia'
+      'TOTEM',
+      'creative',
+      'storytelling',
+      'philosophy',
+      'transmedia'
     ],
-    aliases: ['TOTEM', 'Тотем']
+    aliases: ['TOTEM', '\u0422\u043e\u0442\u0435\u043c']
   },
   {
     id: 'semantic-hypergraph',
-    projectTag: 'research/semantic-hypergraph',
+    projectTag: 'semantic-hypergraph',
     targetFolder: '03_Knowledge/Research/semantic-hypergraph',
     associatedTags: [
-      'research/semantic-hypergraph',
-      'domain/hypergraph',
-      'domain/semantics',
-      'domain/graph-theory',
-      'domain/ontology',
-      'type/research'
+      'semantic-hypergraph',
+      'hypergraph',
+      'semantics',
+      'graph-theory',
+      'ontology',
+      'research'
     ],
-    aliases: ['semantic-hypergraph', 'semantic hypergraph', 'семантический гиперграф']
+    aliases: ['semantic-hypergraph', 'semantic hypergraph', '\u0441\u0435\u043c\u0430\u043d\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0433\u0438\u043f\u0435\u0440\u0433\u0440\u0430\u0444']
   },
   {
     id: 'JeV-response',
-    projectTag: 'research/JeV-response',
+    projectTag: 'JeV-response',
     targetFolder: '03_Knowledge/Research/JeV-response',
     associatedTags: [
-      'research/JeV-response',
-      'domain/AI/local',
-      'domain/AI/LLM',
-      'system/classification',
-      'system/routing',
-      'type/research'
+      'JeV-response',
+      'local-AI',
+      'LLM',
+      'classification',
+      'routing',
+      'research'
     ],
     aliases: ['JeV-response', 'JeV response', 'Jev Decision']
   },
   {
     id: 'semantic-quantization',
-    projectTag: 'research/semantic-quantization',
+    projectTag: 'semantic-quantization',
     targetFolder: '03_Knowledge/Research/semantic-quantization',
     associatedTags: [
-      'research/semantic-quantization',
-      'domain/semantics',
-      'domain/information-theory',
-      'domain/AI/LLM',
-      'type/research'
+      'semantic-quantization',
+      'semantics',
+      'information-theory',
+      'LLM',
+      'research'
     ],
-    aliases: ['semantic-quantization', 'semantic quantization', 'семантическое квантование']
+    aliases: ['semantic-quantization', 'semantic quantization', '\u0441\u0435\u043c\u0430\u043d\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u043a\u0432\u0430\u043d\u0442\u043e\u0432\u0430\u043d\u0438\u0435']
   },
   {
     id: 'language-evolution',
-    projectTag: 'research/language-evolution',
+    projectTag: 'language-evolution',
     targetFolder: '03_Knowledge/Research/language-evolution',
     associatedTags: [
-      'research/language-evolution',
-      'domain/language',
-      'domain/semantics',
-      'domain/society',
-      'type/research'
+      'language-evolution',
+      'language',
+      'semantics',
+      'society',
+      'research'
     ],
-    aliases: ['language-evolution', 'language evolution', 'эволюция языка']
+    aliases: ['language-evolution', 'language evolution', '\u044d\u0432\u043e\u043b\u044e\u0446\u0438\u044f \u044f\u0437\u044b\u043a\u0430']
   },
   {
     id: 'planetary-values',
-    projectTag: 'research/planetary-values',
+    projectTag: 'planetary-values',
     targetFolder: '03_Knowledge/Research/planetary-values',
     associatedTags: [
-      'research/planetary-values',
-      'domain/society',
-      'domain/philosophy',
-      'domain/governance',
-      'type/research'
+      'planetary-values',
+      'society',
+      'philosophy',
+      'governance',
+      'research'
     ],
-    aliases: ['planetary-values', 'planetary values', 'планетарные ценности']
+    aliases: ['planetary-values', 'planetary values', '\u043f\u043b\u0430\u043d\u0435\u0442\u0430\u0440\u043d\u044b\u0435 \u0446\u0435\u043d\u043d\u043e\u0441\u0442\u0438']
   },
   {
     id: 'future-economy',
-    projectTag: 'research/future-economy',
+    projectTag: 'future-economy',
     targetFolder: '03_Knowledge/Research/future-economy',
     associatedTags: [
-      'research/future-economy',
-      'domain/future-economy',
-      'domain/economy',
-      'domain/institutions',
-      'type/research'
+      'future-economy',
+      'economy',
+      'institutions',
+      'research'
     ],
-    aliases: ['future-economy', 'future economy', 'экономика будущего']
+    aliases: ['future-economy', 'future economy', '\u044d\u043a\u043e\u043d\u043e\u043c\u0438\u043a\u0430 \u0431\u0443\u0434\u0443\u0449\u0435\u0433\u043e']
   }
 ];
 
 export const DEFAULT_TAG_ROUTES: Record<string, string> = {
-  'project/Hermes': '01_Projects/Hermes',
-  'project/Obsidian-LLM-Pipeline': '01_Projects/Obsidian-LLM-Pipeline',
-  'project/Neuromicon': '01_Projects/Neuromicon',
-  'project/UUCPFF': '01_Projects/UUCPFF',
-  'project/Escape2Reality': '01_Projects/Escape2Reality',
-  'project/Engineering-Intelligence': '01_Projects/Engineering-Intelligence',
-  'project/Restore-Dumaguete': '01_Projects/Restore-Dumaguete',
-  'project/TOTEM': '01_Projects/TOTEM',
-  'research/semantic-hypergraph': '03_Knowledge/Research/semantic-hypergraph',
-  'research/JeV-response': '03_Knowledge/Research/JeV-response',
-  'research/semantic-quantization': '03_Knowledge/Research/semantic-quantization',
-  'research/language-evolution': '03_Knowledge/Research/language-evolution',
-  'research/planetary-values': '03_Knowledge/Research/planetary-values',
-  'research/future-economy': '03_Knowledge/Research/future-economy',
-  'type/project': '01_Projects/Active',
-  'type/research': '03_Knowledge/Research',
-  'type/whitepaper': '03_Knowledge/Research',
-  'type/scenario': '03_Knowledge/Scripts',
-  'type/meeting': '04_Journal',
-  'type/event': '04_Journal',
-  'type/idea': '05_Ideas',
-  'type/task': '01_Projects/Active',
-  'type/protocol': '03_Knowledge/Technical',
-  'type/tool': '03_Knowledge/Technical',
-  'type/dataset': '03_Knowledge/Technical',
-  'type/person': '02_Areas/People',
-  'type/organization': '02_Areas/Organizations',
-  'type/place': '02_Areas/Places',
-  'type/area': '02_Areas',
-  'type/entity': '03_Knowledge/Entities',
-  'type/concept': '03_Knowledge/Essays',
-  'type/reference': '03_Knowledge/Essays',
-  'status/archived': '06_Archive'
+  Hermes: '01_Projects/Hermes',
+  'Obsidian-LLM-Pipeline': '01_Projects/Obsidian-LLM-Pipeline',
+  Neuromicon: '01_Projects/Neuromicon',
+  UUCPFF: '01_Projects/UUCPFF',
+  Escape2Reality: '01_Projects/Escape2Reality',
+  'Engineering-Intelligence': '01_Projects/Engineering-Intelligence',
+  'Restore-Dumaguete': '01_Projects/Restore-Dumaguete',
+  TOTEM: '01_Projects/TOTEM',
+  'semantic-hypergraph': '03_Knowledge/Research/semantic-hypergraph',
+  'JeV-response': '03_Knowledge/Research/JeV-response',
+  'semantic-quantization': '03_Knowledge/Research/semantic-quantization',
+  'language-evolution': '03_Knowledge/Research/language-evolution',
+  'planetary-values': '03_Knowledge/Research/planetary-values',
+  'future-economy': '03_Knowledge/Research/future-economy',
+  project: '01_Projects/Active',
+  research: '03_Knowledge/Research',
+  whitepaper: '03_Knowledge/Research',
+  scenario: '03_Knowledge/Scripts',
+  meeting: '04_Journal',
+  event: '04_Journal',
+  idea: '05_Ideas',
+  task: '01_Projects/Active',
+  protocol: '03_Knowledge/Technical',
+  tool: '03_Knowledge/Technical',
+  dataset: '03_Knowledge/Technical',
+  person: '02_Areas/People',
+  organization: '02_Areas/Organizations',
+  place: '02_Areas/Places',
+  area: '02_Areas',
+  entity: '03_Knowledge/Entities',
+  concept: '03_Knowledge/Essays',
+  reference: '03_Knowledge/Essays',
+  archived: '06_Archive'
 };
 
 export const DEFAULT_TAG_TAXONOMY: TaxonomyAxisDefinition[] = [
   {
     id: 'root',
     level: 'L0',
-    label: 'L0 — Системный уровень (Infrastructure)',
-    question: 'Инфраструктура, методология или стандарт?',
+    label: 'L0 — System & Infrastructure',
+    question: 'What infrastructure, methodology, or standard does this define?',
     prefix: '',
     tags: [
       'system',
@@ -316,224 +311,216 @@ export const DEFAULT_TAG_TAXONOMY: TaxonomyAxisDefinition[] = [
   {
     id: 'type',
     level: 'L1',
-    label: 'L1 — Тип объекта (TYPE)',
-    question: 'Что это за объект?',
-    prefix: 'type/',
+    label: 'L1 — Object Type',
+    question: 'What kind of object is this document?',
+    prefix: '',
     tags: [
-      'type/project',
-      'type/area',
-      'type/person',
-      'type/organization',
-      'type/place',
-      'type/entity',
-      'type/concept',
-      'type/research',
-      'type/whitepaper',
-      'type/scenario',
-      'type/idea',
-      'type/task',
-      'type/meeting',
-      'type/event',
-      'type/reference',
-      'type/protocol',
-      'type/dataset',
-      'type/tool'
+      'project',
+      'area',
+      'person',
+      'organization',
+      'place',
+      'entity',
+      'concept',
+      'research',
+      'whitepaper',
+      'scenario',
+      'idea',
+      'task',
+      'meeting',
+      'event',
+      'reference',
+      'protocol',
+      'dataset',
+      'tool'
     ]
   },
   {
     id: 'domain',
     level: 'L2',
-    label: 'L2 — Домен (DOMAIN)',
-    question: 'К какой предметной области относится?',
-    prefix: 'domain/',
+    label: 'L2 — Subject Domain',
+    question: 'Which subject domain does this belong to?',
+    prefix: '',
     tags: [
-      // AI / Computing
-      'domain/AI',
-      'domain/AI/agents',
-      'domain/AI/LLM',
-      'domain/AI/local',
-      'domain/AI/multimodal',
-      'domain/machine-learning',
-      'domain/quantum-computing',
-      'domain/cryptography',
-      'domain/cybersecurity',
-      'domain/software',
-      // Knowledge
-      'domain/knowledge',
-      'domain/knowledge-management',
-      'domain/semantics',
-      'domain/language',
-      'domain/ontology',
-      'domain/graph-theory',
-      'domain/hypergraph',
-      'domain/information-theory',
-      // Society / Economy
-      'domain/society',
-      'domain/economy',
-      'domain/future-economy',
-      'domain/institutions',
-      'domain/governance',
-      'domain/education',
-      'domain/community',
-      // Creative
-      'domain/creative',
-      'domain/film',
-      'domain/music',
-      'domain/transmedia',
-      'domain/storytelling',
-      'domain/ARG',
-      'domain/philosophy',
-      // Personal / Operations
-      'domain/personal',
-      'domain/business',
-      'domain/funding',
-      'domain/network',
-      'domain/strategy',
-      'domain/operations'
+      'AI',
+      'agents',
+      'LLM',
+      'local-AI',
+      'multimodal',
+      'machine-learning',
+      'quantum-computing',
+      'cryptography',
+      'cybersecurity',
+      'software',
+      'knowledge',
+      'knowledge-management',
+      'semantics',
+      'language',
+      'ontology',
+      'graph-theory',
+      'hypergraph',
+      'information-theory',
+      'society',
+      'economy',
+      'future-economy',
+      'institutions',
+      'governance',
+      'education',
+      'community',
+      'creative',
+      'film',
+      'music',
+      'transmedia',
+      'storytelling',
+      'ARG',
+      'philosophy',
+      'personal',
+      'business',
+      'funding',
+      'network',
+      'strategy',
+      'operations'
     ]
   },
   {
     id: 'project',
     level: 'L3',
-    label: 'L3 — Проекты и Исследования (PROJECT / RESEARCH)',
-    question: 'К какому проекту или исследованию относится?',
-    prefix: 'project/',
+    label: 'L3 — Projects & Research',
+    question: 'Which project or research stream does it belong to?',
+    prefix: '',
     tags: [
-      'project/Hermes',
-      'project/Obsidian-LLM-Pipeline',
-      'project/Neuromicon',
-      'project/Escape2Reality',
-      'project/UUCPFF',
-      'project/Engineering-Intelligence',
-      'project/Restore-Dumaguete',
-      'project/TOTEM',
-      'research/semantic-hypergraph',
-      'research/JeV-response',
-      'research/semantic-quantization',
-      'research/language-evolution',
-      'research/planetary-values',
-      'research/future-economy'
+      'Hermes',
+      'Obsidian-LLM-Pipeline',
+      'Neuromicon',
+      'Escape2Reality',
+      'UUCPFF',
+      'Engineering-Intelligence',
+      'Restore-Dumaguete',
+      'TOTEM',
+      'semantic-hypergraph',
+      'JeV-response',
+      'semantic-quantization',
+      'language-evolution',
+      'planetary-values',
+      'future-economy'
     ]
   },
   {
     id: 'system',
     level: 'L4',
-    label: 'L4 — Функция / Подсистема / Концепт (SYSTEM / CONCEPT)',
-    question: 'Какую функцию выполняет или какой концепт раскрывает?',
-    prefix: 'system/',
+    label: 'L4 — Subsystem & Concept',
+    question: 'What function does it perform or what concept does it develop?',
+    prefix: '',
     tags: [
-      'system/agent-orchestration',
-      'system/multi-agent',
-      'system/memory',
-      'system/routing',
-      'system/local-LLM',
-      'system/free-API',
-      'system/protocol',
-      'system/semantic-ingestion',
-      'system/tagging',
-      'system/classification',
-      'system/file-routing',
-      'system/registry',
-      'system/queue',
-      'system/watchdog',
-      'system/transmedia',
-      'system/ARG',
-      'system/film-festival',
-      'system/creator-network',
-      'system/film-submission',
-      'system/curation',
-      'system/distribution',
-      'concept/World-1149',
-      'concept/Protocol-Contact',
-      'concept/24+1',
-      'concept/Defragmentation',
-      'concept/E=M×C²'
+      'agent-orchestration',
+      'multi-agent',
+      'memory',
+      'routing',
+      'local-LLM',
+      'free-API',
+      'protocol',
+      'semantic-ingestion',
+      'tagging',
+      'classification',
+      'file-routing',
+      'registry',
+      'queue',
+      'watchdog',
+      'transmedia',
+      'ARG',
+      'film-festival',
+      'creator-network',
+      'film-submission',
+      'curation',
+      'distribution',
+      'World-1149',
+      'Protocol-Contact',
+      '24+1',
+      'Defragmentation',
+      'E=M×C²'
     ]
   },
   {
     id: 'status',
     level: 'L5',
-    label: 'L5 — Состояние (STATUS)',
-    question: 'В каком состоянии находится объект?',
-    prefix: 'status/',
+    label: 'L5 — Lifecycle Status',
+    question: 'What state is this object currently in?',
+    prefix: '',
     tags: [
-      'status/idea',
-      'status/research',
-      'status/design',
-      'status/prototype',
-      'status/active',
-      'status/testing',
-      'status/paused',
-      'status/blocked',
-      'status/completed',
-      'status/archived'
+      'idea',
+      'prototype',
+      'active',
+      'testing',
+      'paused',
+      'blocked',
+      'completed',
+      'archived'
     ]
   },
   {
     id: 'priority',
     level: 'L6',
-    label: 'L6 — Приоритет (PRIORITY)',
-    question: 'Насколько это критично (P0–P3)?',
-    prefix: 'priority/',
+    label: 'L6 — Priority Level',
+    question: 'How critical is this item (P0–P3)?',
+    prefix: '',
     tags: [
-      'priority/P0',
-      'priority/P1',
-      'priority/P2',
-      'priority/P3'
+      'P0',
+      'P1',
+      'P2',
+      'P3'
     ]
   },
   {
     id: 'stage',
     level: 'L7',
-    label: 'L7 — Стадия работы (STAGE)',
-    question: 'На какой стадии находится работа над материалом?',
-    prefix: 'stage/',
+    label: 'L7 — Work Stage',
+    question: 'What stage of execution is this material in?',
+    prefix: '',
     tags: [
-      'stage/question',
-      'stage/discovery',
-      'stage/research',
-      'stage/model',
-      'stage/design',
-      'stage/implementation',
-      'stage/validation',
-      'stage/deployment',
-      'stage/measurement'
+      'question',
+      'discovery',
+      'model',
+      'design',
+      'implementation',
+      'validation',
+      'deployment',
+      'measurement'
     ]
   },
   {
     id: 'knowledge',
     level: 'Axis',
-    label: 'Характер знания (KNOWLEDGE)',
-    question: 'Какова эпистемологическая роль материала?',
-    prefix: 'knowledge/',
+    label: 'Epistemic Nature',
+    question: 'What is the epistemic role of this knowledge?',
+    prefix: '',
     tags: [
-      'knowledge/fact',
-      'knowledge/observation',
-      'knowledge/hypothesis',
-      'knowledge/model',
-      'knowledge/theory',
-      'knowledge/assumption',
-      'knowledge/question',
-      'knowledge/decision',
-      'knowledge/evidence',
-      'knowledge/specification'
+      'fact',
+      'observation',
+      'hypothesis',
+      'model',
+      'theory',
+      'assumption',
+      'question',
+      'decision',
+      'evidence',
+      'specification'
     ]
   },
   {
     id: 'relation',
     level: 'Axis',
-    label: 'Тип связи (RELATION)',
-    question: 'Какую связь выражает документ?',
-    prefix: 'relation/',
+    label: 'Entity Relation',
+    question: 'What relationship does this document express?',
+    prefix: '',
     tags: [
-      'relation/dependency',
-      'relation/component',
-      'relation/alternative',
-      'relation/extension',
-      'relation/integration',
-      'relation/inspiration',
-      'relation/evidence',
-      'relation/conflict'
+      'dependency',
+      'component',
+      'alternative',
+      'extension',
+      'integration',
+      'inspiration',
+      'evidence',
+      'conflict'
     ]
   }
 ];
@@ -544,20 +531,6 @@ for (const axis of DEFAULT_TAG_TAXONOMY) {
     CANONICAL_TAG_MAP.set(t.toLowerCase(), t);
   }
 }
-
-const VALID_HIERARCHICAL_PREFIXES = new Set([
-  'type',
-  'domain',
-  'project',
-  'research',
-  'system',
-  'concept',
-  'status',
-  'priority',
-  'stage',
-  'knowledge',
-  'relation'
-]);
 
 const ALLOWED_ALPHANUMERIC_TERMS = new Set([
   'web3',
@@ -599,22 +572,60 @@ const BANNED_TAG_WORDS = new Set([
   'ifdef'
 ]);
 
+const KNOWN_RESEARCH_IDS = new Set([
+  'semantic-hypergraph',
+  'jev-response',
+  'semantic-quantization',
+  'language-evolution',
+  'planetary-values',
+  'future-economy'
+]);
+
 /**
- * Normalizes a raw tag string to canonical casing if it matches the orthogonal taxonomy.
+ * Strips any `#` prefix and any legacy hierarchical `/` prefixes (e.g. `#system/semantic-ingestion` -> `semantic-ingestion`,
+ * `#domain/AI/agents` -> `agents`, `#project/Hermes` -> `Hermes`) so tags are always 100% clean, flat, and slash-free.
  */
-export function normalizeToCanonicalTag(raw: string): string {
-  const clean = raw.trim().replace(/^#+/, '').trim();
-  const canonical = CANONICAL_TAG_MAP.get(clean.toLowerCase());
-  if (canonical) return canonical;
-  return clean;
+export function stripTagPrefix(raw: string): string {
+  const withoutHash = String(raw || '')
+    .trim()
+    .replace(/^#+/, '')
+    .replace(/\/+$/, '')
+    .trim();
+  if (!withoutHash) return '';
+  if (withoutHash.includes('/')) {
+    const parts = withoutHash
+      .split('/')
+      .map(p => p.trim())
+      .filter(Boolean);
+    if (parts.length === 0) return '';
+    // Reject folder-like prefixes such as "01_Projects/..."
+    if (/^\d/.test(parts[0])) return '';
+    const last = parts[parts.length - 1];
+    if (last.toLowerCase() === 'local' && parts.some(p => p.toLowerCase() === 'ai')) {
+      return 'local-AI';
+    }
+    return last;
+  }
+  return withoutHash;
 }
 
 /**
- * Validates that a tag is either:
- * 1) A known canonical tag from the Orthogonal Taxonomy (L0-L7),
- * 2) A valid hierarchical tag (e.g., `project/MyProject`, `domain/AI/agents`) with max depth 3, or
- * 3) A meaningful human word/phrase,
- * while strictly rejecting random alphanumeric IDs like "#01G23", "#w3x06", "#01_Projects", hex codes, or numeric IDs.
+ * Normalizes a raw tag string to a clean, slash-free canonical tag.
+ */
+export function normalizeToCanonicalTag(raw: string): string {
+  const stripped = stripTagPrefix(raw);
+  if (!stripped) return '';
+  const lower = stripped.toLowerCase();
+  const canonical = CANONICAL_TAG_MAP.get(lower);
+  if (canonical) return canonical;
+  return stripped;
+}
+
+/**
+ * Validates that a tag is a clean, atomic, slash-free tag:
+ * 1) Never contains `/` (no ugly path-like `#system/semantic-ingestion` tags),
+ * 2) Matches a known canonical tag or allowed term, OR is a valid Unicode word/hyphenated phrase,
+ * 3) Strictly rejects random alphanumeric IDs like "#01G23", "#w3x06", "#01_Projects", hex codes, or numeric IDs.
  */
 export function isValidSemanticTag(
   raw: unknown,
@@ -623,6 +634,9 @@ export function isValidSemanticTag(
   if (typeof raw !== 'string' && typeof raw !== 'number') return false;
   const clean = String(raw).trim().replace(/^#+/, '').trim();
   if (!clean) return false;
+
+  // Clean tags must NEVER contain slashes '/'
+  if (clean.includes('/')) return false;
 
   const minLen = options?.allowSingleLetter ? 1 : 2;
   if (clean.length < minLen || clean.length > 65) return false;
@@ -635,44 +649,12 @@ export function isValidSemanticTag(
     return true;
   }
 
-  // Enforce bounded depth: maximum 3 hierarchical levels (e.g. domain/AI/agents)
-  const slashParts = clean.split('/');
-  if (slashParts.length > 3) return false;
-  if (slashParts.some(p => !p || p.trim().length === 0)) return false;
-
-  // If hierarchical (contains '/'), check prefix validity and subsegments
-  if (slashParts.length > 1) {
-    const prefix = slashParts[0].toLowerCase();
-    // Block folder-like prefixes such as "01_Projects/..." or "03_Knowledge/..."
-    if (/^\d/.test(prefix)) return false;
-
-    for (let i = 0; i < slashParts.length; i++) {
-      const part = slashParts[i];
-      const partLower = part.toLowerCase();
-      if (ALLOWED_ALPHANUMERIC_TERMS.has(partLower)) continue;
-
-      // In `project/...` or `concept/...`, allow named entities like Escape2Reality or World-1149,
-      // but block random hex/hash codes like 01G23 or w3x06
-      if ((prefix === 'project' || prefix === 'concept') && i > 0) {
-        if (/^[0-9a-f]{4,}$/i.test(part) || /^\d+[a-z]+\d+$/i.test(part) || /^[a-z]\d+[a-z]\d+$/i.test(part)) {
-          return false;
-        }
-        if (!/[\p{L}]/u.test(part)) return false;
-        continue;
-      }
-
-      if (/\d/.test(part)) return false;
-      if (!/^[\p{L}](?:[\p{L}_-]*[\p{L}])?$/u.test(part)) return false;
-    }
-    return true;
-  }
-
   // 2. Flat tag validation: must start with a Unicode letter (blocks #01G23, #01_Projects, #1234, #2026)
   if (!/^[\p{L}]/u.test(clean)) {
     return false;
   }
 
-  // Must NOT contain any digits unless it is in ALLOWED_ALPHANUMERIC_TERMS
+  // Must NOT contain any digits unless it is in ALLOWED_ALPHANUMERIC_TERMS or CANONICAL_TAG_MAP
   // This completely prevents #01G23, #w3x06, #a3ps9, #ff00aa, #v1, #item1, etc.
   if (/\d/.test(clean)) {
     return false;
@@ -726,7 +708,7 @@ export function sanitizeTagList(
 }
 
 /**
- * Maps legacy flat tags or keywords into the user's Orthogonal Multi-Level Taxonomy (L0-L7).
+ * Maps synonyms, Russian terms, and legacy keywords into clean canonical tags (zero '/' slashes).
  */
 const LEGACY_TO_TAXONOMY_MAP: Record<string, string> = {
   // L0
@@ -737,194 +719,195 @@ const LEGACY_TO_TAXONOMY_MAP: Record<string, string> = {
   protocol: 'protocol',
   architecture: 'architecture',
   reference: 'reference',
-  архитектура: 'architecture',
-  протокол: 'protocol',
-  методология: 'method',
-  справочник: 'reference',
+  '\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\u0430': 'architecture',
+  '\u043f\u0440\u043e\u0442\u043e\u043a\u043e\u043b': 'protocol',
+  '\u043c\u0435\u0442\u043e\u0434\u043e\u043b\u043e\u0433\u0438\u044f': 'method',
+  '\u0441\u043f\u0440\u0430\u0432\u043e\u0447\u043d\u0438\u043a': 'reference',
 
-  // L1 - type/
-  project: 'type/project',
-  проект: 'type/project',
-  area: 'type/area',
-  person: 'type/person',
-  organization: 'type/organization',
-  place: 'type/place',
-  entity: 'type/entity',
-  concept: 'type/concept',
-  концепт: 'type/concept',
-  концепция: 'type/concept',
-  research: 'type/research',
-  исследование: 'type/research',
-  whitepaper: 'type/whitepaper',
-  вайтпейпер: 'type/whitepaper',
-  scenario: 'type/scenario',
-  script: 'type/scenario',
-  screenplay: 'type/scenario',
-  сценарий: 'type/scenario',
-  idea: 'type/idea',
-  идея: 'type/idea',
-  task: 'type/task',
-  задача: 'type/task',
-  action: 'type/task',
-  'action-items': 'type/task',
-  meeting: 'type/meeting',
-  agenda: 'type/meeting',
-  встреча: 'type/meeting',
-  совещание: 'type/meeting',
-  event: 'type/event',
-  событие: 'type/event',
-  dataset: 'type/dataset',
-  tool: 'type/tool',
-  инструмент: 'type/tool',
+  // L1 - Object Type
+  project: 'project',
+  '\u043f\u0440\u043e\u0435\u043a\u0442': 'project',
+  area: 'area',
+  person: 'person',
+  organization: 'organization',
+  place: 'place',
+  entity: 'entity',
+  concept: 'concept',
+  '\u043a\u043e\u043d\u0446\u0435\u043f\u0442': 'concept',
+  '\u043a\u043e\u043d\u0446\u0435\u043f\u0446\u0438\u044f': 'concept',
+  research: 'research',
+  '\u0438\u0441\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u043d\u0438\u0435': 'research',
+  whitepaper: 'whitepaper',
+  '\u0432\u0430\u0439\u0442\u043f\u0435\u0439\u043f\u0435\u0440': 'whitepaper',
+  scenario: 'scenario',
+  script: 'scenario',
+  screenplay: 'scenario',
+  '\u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439': 'scenario',
+  idea: 'idea',
+  '\u0438\u0434\u0435\u044f': 'idea',
+  task: 'task',
+  '\u0437\u0430\u0434\u0430\u0447\u0430': 'task',
+  action: 'task',
+  'action-items': 'task',
+  meeting: 'meeting',
+  agenda: 'meeting',
+  '\u0432\u0441\u0442\u0440\u0435\u0447\u0430': 'meeting',
+  '\u0441\u043e\u0432\u0435\u0449\u0430\u043d\u0438\u0435': 'meeting',
+  event: 'event',
+  '\u0441\u043e\u0431\u044b\u0442\u0438\u0435': 'event',
+  dataset: 'dataset',
+  tool: 'tool',
+  '\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442': 'tool',
 
-  // L2 - domain/
-  ai: 'domain/AI',
-  ии: 'domain/AI',
-  нейросети: 'domain/AI',
-  agents: 'domain/AI/agents',
-  agent: 'domain/AI/agents',
-  агент: 'domain/AI/agents',
-  агенты: 'domain/AI/agents',
-  llm: 'domain/AI/LLM',
-  'local-llm': 'system/local-LLM',
-  multimodal: 'domain/AI/multimodal',
-  'machine-learning': 'domain/machine-learning',
-  ml: 'domain/machine-learning',
-  quantum: 'domain/quantum-computing',
-  'quantum-computing': 'domain/quantum-computing',
-  crypto: 'domain/cryptography',
-  cryptography: 'domain/cryptography',
-  криптография: 'domain/cryptography',
-  cybersecurity: 'domain/cybersecurity',
-  security: 'domain/cybersecurity',
-  безопасность: 'domain/cybersecurity',
-  software: 'domain/software',
-  code: 'domain/software',
-  разработка: 'domain/software',
-  semantics: 'domain/semantics',
-  семантика: 'domain/semantics',
-  ontology: 'domain/ontology',
-  онтология: 'domain/ontology',
-  hypergraph: 'domain/hypergraph',
-  гиперграф: 'domain/hypergraph',
-  'graph-theory': 'domain/graph-theory',
-  'information-theory': 'domain/information-theory',
-  'knowledge-management': 'domain/knowledge-management',
-  society: 'domain/society',
-  общество: 'domain/society',
-  economy: 'domain/economy',
-  экономика: 'domain/economy',
-  'future-economy': 'domain/future-economy',
-  governance: 'domain/governance',
-  education: 'domain/education',
-  образование: 'domain/education',
-  community: 'domain/community',
-  сообщество: 'domain/community',
-  creative: 'domain/creative',
-  творчество: 'domain/creative',
-  film: 'domain/film',
-  кино: 'domain/film',
-  music: 'domain/music',
-  музыка: 'domain/music',
-  transmedia: 'domain/transmedia',
-  трансмедиа: 'domain/transmedia',
-  storytelling: 'domain/storytelling',
-  сторителлинг: 'domain/storytelling',
-  arg: 'domain/ARG',
-  philosophy: 'domain/philosophy',
-  философия: 'domain/philosophy',
-  business: 'domain/business',
-  бизнес: 'domain/business',
-  funding: 'domain/funding',
-  инвестиции: 'domain/funding',
-  strategy: 'domain/strategy',
-  стратегия: 'domain/strategy',
-  operations: 'domain/operations',
-  операционка: 'domain/operations',
+  // L2 - Subject Domain
+  ai: 'AI',
+  '\u0438\u0438': 'AI',
+  '\u043d\u0435\u0439\u0440\u043e\u0441\u0435\u0442\u0438': 'AI',
+  agents: 'agents',
+  agent: 'agents',
+  '\u0430\u0433\u0435\u043d\u0442': 'agents',
+  '\u0430\u0433\u0435\u043d\u0442\u044b': 'agents',
+  llm: 'LLM',
+  'local-llm': 'local-LLM',
+  'local-ai': 'local-AI',
+  multimodal: 'multimodal',
+  'machine-learning': 'machine-learning',
+  ml: 'machine-learning',
+  quantum: 'quantum-computing',
+  'quantum-computing': 'quantum-computing',
+  crypto: 'cryptography',
+  cryptography: 'cryptography',
+  '\u043a\u0440\u0438\u043f\u0442\u043e\u0433\u0440\u0430\u0444\u0438\u044f': 'cryptography',
+  cybersecurity: 'cybersecurity',
+  security: 'cybersecurity',
+  '\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u044c': 'cybersecurity',
+  software: 'software',
+  code: 'software',
+  '\u0440\u0430\u0437\u0440\u0430\u0431\u043e\u0442\u043a\u0430': 'software',
+  semantics: 'semantics',
+  '\u0441\u0435\u043c\u0430\u043d\u0442\u0438\u043a\u0430': 'semantics',
+  ontology: 'ontology',
+  '\u043e\u043d\u0442\u043e\u043b\u043e\u0433\u0438\u044f': 'ontology',
+  hypergraph: 'hypergraph',
+  '\u0433\u0438\u043f\u0435\u0440\u0433\u0440\u0430\u0444': 'hypergraph',
+  'graph-theory': 'graph-theory',
+  'information-theory': 'information-theory',
+  'knowledge-management': 'knowledge-management',
+  society: 'society',
+  '\u043e\u0431\u0449\u0435\u0441\u0442\u0432\u043e': 'society',
+  economy: 'economy',
+  '\u044d\u043a\u043e\u043d\u043e\u043c\u0438\u043a\u0430': 'economy',
+  'future-economy': 'future-economy',
+  governance: 'governance',
+  education: 'education',
+  '\u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u043d\u0438\u0435': 'education',
+  community: 'community',
+  '\u0441\u043e\u043e\u0431\u0449\u0435\u0441\u0442\u0432\u043e': 'community',
+  creative: 'creative',
+  '\u0442\u0432\u043e\u0440\u0447\u0435\u0441\u0442\u0432\u043e': 'creative',
+  film: 'film',
+  '\u043a\u0438\u043d\u043e': 'film',
+  music: 'music',
+  '\u043c\u0443\u0437\u044b\u043a\u0430': 'music',
+  transmedia: 'transmedia',
+  '\u0442\u0440\u0430\u043d\u0441\u043c\u0435\u0434\u0438\u0430': 'transmedia',
+  storytelling: 'storytelling',
+  '\u0441\u0442\u043e\u0440\u0438\u0442\u0435\u043b\u043b\u0438\u043d\u0433': 'storytelling',
+  arg: 'ARG',
+  philosophy: 'philosophy',
+  '\u0444\u0438\u043b\u043e\u0441\u043e\u0444\u0438\u044f': 'philosophy',
+  business: 'business',
+  '\u0431\u0438\u0437\u043d\u0435\u0441': 'business',
+  funding: 'funding',
+  '\u0438\u043d\u0432\u0435\u0441\u0442\u0438\u0446\u0438\u0438': 'funding',
+  strategy: 'strategy',
+  '\u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u044f': 'strategy',
+  operations: 'operations',
+  '\u043e\u043f\u0435\u0440\u0430\u0446\u0438\u043e\u043d\u043a\u0430': 'operations',
 
-  // L3 - project/ & research/
-  hermes: 'project/Hermes',
-  'hermes-agent': 'project/Hermes',
-  neuromicon: 'project/Neuromicon',
-  нейромикон: 'project/Neuromicon',
-  escape2reality: 'project/Escape2Reality',
-  uucpff: 'project/UUCPFF',
-  totem: 'project/TOTEM',
-  тотем: 'project/TOTEM',
-  'semantic-hypergraph': 'research/semantic-hypergraph',
-  'jev-response': 'research/JeV-response',
-  'semantic-quantization': 'research/semantic-quantization',
+  // L3 - Projects & Research
+  hermes: 'Hermes',
+  'hermes-agent': 'Hermes',
+  neuromicon: 'Neuromicon',
+  '\u043d\u0435\u0439\u0440\u043e\u043c\u0438\u043a\u043e\u043d': 'Neuromicon',
+  escape2reality: 'Escape2Reality',
+  uucpff: 'UUCPFF',
+  totem: 'TOTEM',
+  '\u0442\u043e\u0442\u0435\u043c': 'TOTEM',
+  'semantic-hypergraph': 'semantic-hypergraph',
+  'jev-response': 'JeV-response',
+  'semantic-quantization': 'semantic-quantization',
 
-  // L4 - system/ & concept/
-  'system-prompt': 'system/agent-orchestration',
-  'agent-orchestration': 'system/agent-orchestration',
-  'multi-agent': 'system/multi-agent',
-  memory: 'system/memory',
-  routing: 'system/routing',
-  'file-routing': 'system/file-routing',
-  classification: 'system/classification',
-  tagging: 'system/tagging',
-  'semantic-ingestion': 'system/semantic-ingestion',
-  registry: 'system/registry',
-  queue: 'system/queue',
-  watchdog: 'system/watchdog',
-  'film-festival': 'system/film-festival',
-  'world-1149': 'concept/World-1149',
-  '1149': 'concept/World-1149',
-  'protocol-contact': 'concept/Protocol-Contact',
-  defragmentation: 'concept/Defragmentation',
+  // L4 - Subsystem & Concept
+  'system-prompt': 'agent-orchestration',
+  'agent-orchestration': 'agent-orchestration',
+  'multi-agent': 'multi-agent',
+  memory: 'memory',
+  routing: 'routing',
+  'file-routing': 'file-routing',
+  classification: 'classification',
+  tagging: 'tagging',
+  'semantic-ingestion': 'semantic-ingestion',
+  registry: 'registry',
+  queue: 'queue',
+  watchdog: 'watchdog',
+  'film-festival': 'film-festival',
+  'world-1149': 'World-1149',
+  '1149': 'World-1149',
+  'protocol-contact': 'Protocol-Contact',
+  defragmentation: 'Defragmentation',
 
-  // L5 - status/
-  active: 'status/active',
-  prototype: 'status/prototype',
-  прототип: 'status/prototype',
-  testing: 'status/testing',
-  тестирование: 'status/testing',
-  paused: 'status/paused',
-  blocked: 'status/blocked',
-  completed: 'status/completed',
-  archived: 'status/archived',
+  // L5 - Status
+  active: 'active',
+  prototype: 'prototype',
+  '\u043f\u0440\u043e\u0442\u043e\u0442\u0438\u043f': 'prototype',
+  testing: 'testing',
+  '\u0442\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435': 'testing',
+  paused: 'paused',
+  blocked: 'blocked',
+  completed: 'completed',
+  archived: 'archived',
 
-  // L6 - priority/
-  p0: 'priority/P0',
-  p1: 'priority/P1',
-  p2: 'priority/P2',
-  p3: 'priority/P3',
+  // L6 - Priority
+  p0: 'P0',
+  p1: 'P1',
+  p2: 'P2',
+  p3: 'P3',
 
-  // L7 - stage/
-  discovery: 'stage/discovery',
-  design: 'stage/design',
-  implementation: 'stage/implementation',
-  roadmap: 'stage/design',
-  'launch-plan': 'stage/deployment',
-  validation: 'stage/validation',
-  deployment: 'stage/deployment',
-  measurement: 'stage/measurement',
+  // L7 - Stage
+  discovery: 'discovery',
+  design: 'design',
+  implementation: 'implementation',
+  roadmap: 'design',
+  'launch-plan': 'deployment',
+  validation: 'validation',
+  deployment: 'deployment',
+  measurement: 'measurement',
 
   // Knowledge axis
-  fact: 'knowledge/fact',
-  observation: 'knowledge/observation',
-  hypothesis: 'knowledge/hypothesis',
-  гипотеза: 'knowledge/hypothesis',
-  model: 'knowledge/model',
-  модель: 'knowledge/model',
-  theory: 'knowledge/theory',
-  теория: 'knowledge/theory',
-  assumption: 'knowledge/assumption',
-  decision: 'knowledge/decision',
-  решение: 'knowledge/decision',
-  evidence: 'knowledge/evidence',
-  specification: 'knowledge/specification',
-  тз: 'knowledge/specification',
-  спецификация: 'knowledge/specification'
+  fact: 'fact',
+  observation: 'observation',
+  hypothesis: 'hypothesis',
+  '\u0433\u0438\u043f\u043e\u0442\u0435\u0437\u0430': 'hypothesis',
+  model: 'model',
+  '\u043c\u043e\u0434\u0435\u043b\u044c': 'model',
+  theory: 'theory',
+  '\u0442\u0435\u043e\u0440\u0438\u044f': 'theory',
+  assumption: 'assumption',
+  decision: 'decision',
+  '\u0440\u0435\u0448\u0435\u043d\u0438\u0435': 'decision',
+  evidence: 'evidence',
+  specification: 'specification',
+  '\u0442\u0437': 'specification',
+  '\u0441\u043f\u0435\u0446\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f': 'specification'
 };
 
 /**
  * Infers which project (or research direction) a note belongs to by scoring:
- * 1) Explicit `project/<Name>` or `research/<Name>` tags in existingTags/body
+ * 1) Explicit project/research tags (`#Hermes`, `#Neuromicon`, `#semantic-hypergraph`) in existingTags/body
  * 2) Project aliases in filename or title
- * 3) Project-specific associated tags & concepts (e.g. `#concept/World-1149` -> `project/Neuromicon`,
- *    `#system/film-festival` -> `project/UUCPFF`, or any custom hashtags imported by the user).
+ * 3) Project-specific associated tags & concepts (e.g. `#World-1149` -> `Neuromicon`,
+ *    `#film-festival` -> `UUCPFF`, or any custom hashtags imported by the user).
  */
 export function inferProjectFromNoteAndTaxonomy(params: {
   filename?: string;
@@ -956,9 +939,16 @@ export function inferProjectFromNoteAndTaxonomy(params: {
   // Build unified profiles list (merging user/default profiles + discovered vault projects)
   const profilesByKey = new Map<string, ProjectTagProfile>();
   for (const prof of projectProfiles) {
-    profilesByKey.set(prof.projectTag.toLowerCase(), {
+    const cleanPTag = stripTagPrefix(prof.projectTag) || prof.id;
+    CANONICAL_TAG_MAP.set(cleanPTag.toLowerCase(), cleanPTag);
+    const cleanAssoc = prof.associatedTags.map(t => stripTagPrefix(t)).filter(Boolean);
+    for (const ca of cleanAssoc) {
+      CANONICAL_TAG_MAP.set(ca.toLowerCase(), ca);
+    }
+    profilesByKey.set(cleanPTag.toLowerCase(), {
       ...prof,
-      associatedTags: [...prof.associatedTags],
+      projectTag: cleanPTag,
+      associatedTags: cleanAssoc,
       aliases: [...prof.aliases]
     });
   }
@@ -966,7 +956,9 @@ export function inferProjectFromNoteAndTaxonomy(params: {
   for (const dp of discoveredProjects) {
     const folderName = (dp.folder.split('/').pop() || dp.id).trim().replace(/\s+/g, '-');
     if (!folderName) continue;
-    const pTag = `project/${folderName}`;
+    const pTag = stripTagPrefix(folderName);
+    if (!pTag) continue;
+    CANONICAL_TAG_MAP.set(pTag.toLowerCase(), pTag);
     const existing = profilesByKey.get(pTag.toLowerCase());
     if (existing) {
       existing.targetFolder = dp.folder || existing.targetFolder;
@@ -993,12 +985,19 @@ export function inferProjectFromNoteAndTaxonomy(params: {
     };
   }
 
+  const domainAndTypeLower = new Set<string>();
+  for (const ax of DEFAULT_TAG_TAXONOMY) {
+    if (ax.id === 'domain' || ax.id === 'type' || ax.id === 'root' || ax.id === 'status') {
+      for (const t of ax.tags) domainAndTypeLower.add(t.toLowerCase());
+    }
+  }
+
   // Count how many profiles share each associatedTag so unique tags carry higher weight
   const tagFrequency = new Map<string, number>();
   for (const prof of allProfiles) {
     for (const t of prof.associatedTags) {
-      const low = t.toLowerCase();
-      tagFrequency.set(low, (tagFrequency.get(low) || 0) + 1);
+      const low = stripTagPrefix(t).toLowerCase();
+      if (low) tagFrequency.set(low, (tagFrequency.get(low) || 0) + 1);
     }
   }
 
@@ -1007,7 +1006,7 @@ export function inferProjectFromNoteAndTaxonomy(params: {
   const rawCombined = `${filename}\n${title}\n${body.slice(0, 4000)}`.toLowerCase();
   const folderLower = folder.toLowerCase().replace(/\\/g, '/');
   const normExistingTags = new Set(
-    existingTags.map(t => String(t).trim().replace(/^#+/, '').toLowerCase()).filter(Boolean)
+    existingTags.map(t => stripTagPrefix(String(t)).toLowerCase()).filter(Boolean)
   );
 
   let bestProfile: ProjectTagProfile | null = null;
@@ -1019,8 +1018,13 @@ export function inferProjectFromNoteAndTaxonomy(params: {
     const matchedAssoc = new Set<string>();
     const pTagLower = prof.projectTag.toLowerCase();
 
-    // 1. Direct project tag in existingTags or inline #project/... in text
-    if (normExistingTags.has(pTagLower) || rawCombined.includes(`#${pTagLower}`)) {
+    // 1. Direct project tag in existingTags or inline #ProjectName in text
+    if (
+      normExistingTags.has(pTagLower) ||
+      rawCombined.includes(`#${pTagLower}`) ||
+      rawCombined.includes(`#project/${pTagLower}`) ||
+      rawCombined.includes(`#research/${pTagLower}`)
+    ) {
       score += 12;
       matchedAssoc.add(prof.projectTag);
     }
@@ -1049,20 +1053,24 @@ export function inferProjectFromNoteAndTaxonomy(params: {
     }
 
     // 4. Associated tags (subsystems, concepts, domains) in existingTags or text
-    for (const assoc of prof.associatedTags) {
+    for (const assocRaw of prof.associatedTags) {
+      const assoc = stripTagPrefix(assocRaw);
       const assocLower = assoc.toLowerCase();
-      if (assocLower === pTagLower) continue;
+      if (!assocLower || assocLower === pTagLower) continue;
 
-      const leaf = assoc.includes('/') ? assoc.split('/').slice(1).join('/') : assoc;
-      const leafLower = leaf.toLowerCase();
-      const leafSpaced = leafLower.replace(/[_-]+/g, ' ');
+      const leafSpaced = assocLower.replace(/[_-]+/g, ' ');
       const freq = tagFrequency.get(assocLower) || 1;
-      const isUniqueToProject = freq === 1 && !assocLower.startsWith('domain/') && !assocLower.startsWith('type/');
+      const isUniqueToProject = freq === 1 && !domainAndTypeLower.has(assocLower);
 
-      const hasExactTag = normExistingTags.has(assocLower) || normExistingTags.has(leafLower) || rawCombined.includes(`#${assocLower}`);
+      const hasExactTag =
+        normExistingTags.has(assocLower) ||
+        rawCombined.includes(`#${assocLower}`) ||
+        rawCombined.includes(`/${assocLower}`);
       const hasLeafInText =
-        leafLower.length >= 4 &&
-        (rawCombined.includes(leafLower) || (leafSpaced.length >= 5 && normBody.includes(leafSpaced)) || normHeader.includes(leafSpaced));
+        assocLower.length >= 4 &&
+        (rawCombined.includes(assocLower) ||
+          (leafSpaced.length >= 5 && normBody.includes(leafSpaced)) ||
+          normHeader.includes(leafSpaced));
 
       if (hasExactTag) {
         score += isUniqueToProject ? 4.5 : 2;
@@ -1080,7 +1088,7 @@ export function inferProjectFromNoteAndTaxonomy(params: {
     }
   }
 
-  // Require a meaningful threshold (score >= 4: e.g. explicit project name, or >=1 unique project tag + context, or >=2 project tags)
+  // Require a meaningful threshold (score >= 4)
   if (!bestProfile || bestScore < 4) {
     return {
       matchedProfile: null,
@@ -1101,7 +1109,7 @@ export function inferProjectFromNoteAndTaxonomy(params: {
 }
 
 /**
- * Determines the target vault directory for a Markdown file based on its assigned Orthogonal Taxonomy tags
+ * Determines the target vault directory for a Markdown file based on its clean tags
  * and user-configured tagRoutes / projectProfiles.
  */
 export function resolveDirectoryFromTags(params: {
@@ -1125,139 +1133,95 @@ export function resolveDirectoryFromTags(params: {
     fallbackFolder = '03_Knowledge/Essays'
   } = params;
 
-  const cleanTags = tags.map(t => String(t).trim().replace(/^#+/, '').trim()).filter(Boolean);
+  const cleanTags = tags.map(t => stripTagPrefix(String(t))).filter(Boolean);
 
-  // Build case-insensitive route lookup
+  // Build case-insensitive route lookup and project lookup
   const routeMap = new Map<string, string>();
+  const projectLookup = new Map<string, { id: string; tag: string; folder: string }>();
+
   for (const [k, v] of Object.entries(DEFAULT_TAG_ROUTES)) {
-    routeMap.set(k.toLowerCase(), v);
+    const cleanKey = stripTagPrefix(k);
+    if (cleanKey) routeMap.set(cleanKey.toLowerCase(), v);
   }
   for (const [k, v] of Object.entries(tagRoutes || {})) {
-    if (k && v) routeMap.set(k.trim().replace(/^#+/, '').toLowerCase(), v.trim());
+    const cleanKey = stripTagPrefix(k);
+    if (cleanKey && v) routeMap.set(cleanKey.toLowerCase(), v.trim());
   }
   for (const prof of projectProfiles) {
-    if (prof.projectTag && prof.targetFolder) {
-      routeMap.set(prof.projectTag.toLowerCase(), prof.targetFolder);
+    const cleanPTag = stripTagPrefix(prof.projectTag) || prof.id;
+    if (cleanPTag && prof.targetFolder) {
+      routeMap.set(cleanPTag.toLowerCase(), prof.targetFolder);
+      projectLookup.set(cleanPTag.toLowerCase(), {
+        id: prof.id,
+        tag: cleanPTag,
+        folder: prof.targetFolder
+      });
     }
   }
   for (const dp of discoveredProjects) {
     const folderName = (dp.folder.split('/').pop() || dp.id).trim().replace(/\s+/g, '-');
-    if (folderName && dp.folder) {
-      routeMap.set(`project/${folderName.toLowerCase()}`, dp.folder);
-      routeMap.set(`project/${dp.id.toLowerCase()}`, dp.folder);
+    const cleanKey = stripTagPrefix(folderName);
+    if (cleanKey && dp.folder) {
+      routeMap.set(cleanKey.toLowerCase(), dp.folder);
+      routeMap.set(dp.id.toLowerCase(), dp.folder);
+      projectLookup.set(cleanKey.toLowerCase(), {
+        id: folderName,
+        tag: cleanKey,
+        folder: dp.folder
+      });
     }
   }
 
-  // 0. If explicitly marked `status/archived` (and not `status/active`), route to Archive
+  // 0. If explicitly marked `archived` (and not `active`), route to Archive
   if (
-    cleanTags.some(t => t.toLowerCase() === 'status/archived') &&
-    !cleanTags.some(t => t.toLowerCase() === 'status/active')
+    cleanTags.some(t => t.toLowerCase() === 'archived') &&
+    !cleanTags.some(t => t.toLowerCase() === 'active')
   ) {
     return {
-      targetFolder: routeMap.get('status/archived') || '06_Archive',
-      matchedByTag: 'status/archived',
+      targetFolder: routeMap.get('archived') || '06_Archive',
+      matchedByTag: 'archived',
       matchedProjectId: null
     };
   }
 
-  // 1. Highest priority: `project/<Name>` tag -> routes directly to that project's directory
+  // 1. Highest priority: Known project or research tag -> routes directly to that project/research directory
   for (const tag of cleanTags) {
     const lower = tag.toLowerCase();
-    if (lower.startsWith('project/')) {
-      const projName = tag.slice('project/'.length).trim();
-      const explicitRoute = routeMap.get(lower);
-      if (explicitRoute) {
-        return {
-          targetFolder: explicitRoute,
-          matchedByTag: tag,
-          matchedProjectId: projName
-        };
-      }
-      if (projName) {
-        return {
-          targetFolder: `${projectsRoot}/${projName}`,
-          matchedByTag: tag,
-          matchedProjectId: projName
-        };
-      }
-    }
-  }
-
-  // 2. Second priority: `research/<Topic>` tag -> routes to research directory
-  for (const tag of cleanTags) {
-    const lower = tag.toLowerCase();
-    if (lower.startsWith('research/')) {
-      const topic = tag.slice('research/'.length).trim();
-      const explicitRoute = routeMap.get(lower);
-      if (explicitRoute) {
-        return {
-          targetFolder: explicitRoute,
-          matchedByTag: tag,
-          matchedProjectId: topic
-        };
-      }
-      if (topic) {
-        return {
-          targetFolder: `03_Knowledge/Research/${topic}`,
-          matchedByTag: tag,
-          matchedProjectId: topic
-        };
-      }
-    }
-  }
-
-  // 3. Third priority: Check if any tag in `cleanTags` belongs exclusively to a known ProjectTagProfile
-  for (const prof of projectProfiles) {
-    if (
-      cleanTags.some(
-        t =>
-          t.toLowerCase() === prof.projectTag.toLowerCase()
-      )
-    ) {
+    const projMatch = projectLookup.get(lower);
+    if (projMatch) {
       return {
-        targetFolder: prof.targetFolder,
-        matchedByTag: prof.projectTag,
-        matchedProjectId: prof.id
+        targetFolder: projMatch.folder,
+        matchedByTag: projMatch.tag,
+        matchedProjectId: projMatch.id
       };
     }
   }
 
-  // 4. Fourth priority: `status/archived` (if not in an active project)
-  if (cleanTags.some(t => t.toLowerCase() === 'status/archived') && !cleanTags.some(t => t.toLowerCase() === 'status/active')) {
-    return {
-      targetFolder: routeMap.get('status/archived') || '06_Archive',
-      matchedByTag: 'status/archived',
-      matchedProjectId: null
-    };
-  }
-
-  // 5. Fifth priority: `type/<Type>` tag ( preferring specific types over generic `type/reference` or `type/concept`)
-  const typeTags = cleanTags.filter(t => t.toLowerCase().startsWith('type/'));
+  // 2. Specific Object Type tags (preferring specific types over generic `reference` or `concept`)
   const specificTypeOrder = [
-    'type/scenario',
-    'type/meeting',
-    'type/event',
-    'type/whitepaper',
-    'type/research',
-    'type/protocol',
-    'type/tool',
-    'type/dataset',
-    'type/idea',
-    'type/task',
-    'type/person',
-    'type/organization',
-    'type/place',
-    'type/area',
-    'type/entity',
-    'type/project',
-    'type/concept',
-    'type/reference'
+    'scenario',
+    'meeting',
+    'event',
+    'whitepaper',
+    'research',
+    'protocol',
+    'tool',
+    'dataset',
+    'idea',
+    'task',
+    'person',
+    'organization',
+    'place',
+    'area',
+    'entity',
+    'project',
+    'concept',
+    'reference'
   ];
   for (const prefType of specificTypeOrder) {
-    const found = typeTags.find(t => t.toLowerCase() === prefType);
+    const found = cleanTags.find(t => t.toLowerCase() === prefType);
     if (found) {
-      // If it's generic `type/reference` or `type/concept`, check if a `domain/...` tag provides a more specific folder first
-      if (prefType === 'type/reference' || prefType === 'type/concept') {
+      if (prefType === 'reference' || prefType === 'concept') {
         break;
       }
       const mapped = routeMap.get(prefType);
@@ -1271,58 +1235,66 @@ export function resolveDirectoryFromTags(params: {
     }
   }
 
-  // 6. Sixth priority: `domain/<Domain>` or `system/<System>` tags
+  // 3. Domain or System tags
+  const techSet = new Set([
+    'ai',
+    'agents',
+    'llm',
+    'local-ai',
+    'local-llm',
+    'multimodal',
+    'machine-learning',
+    'quantum-computing',
+    'cryptography',
+    'cybersecurity',
+    'software',
+    'agent-orchestration',
+    'multi-agent',
+    'memory',
+    'routing',
+    'free-api',
+    'semantic-ingestion',
+    'tagging',
+    'classification',
+    'file-routing',
+    'registry',
+    'queue',
+    'watchdog'
+  ]);
+  const scriptSet = new Set(['film', 'transmedia', 'storytelling', 'arg']);
+  const bizSet = new Set(['business', 'funding', 'strategy', 'operations', 'personal', 'network']);
+
   for (const tag of cleanTags) {
     const lower = tag.toLowerCase();
-    if (routeMap.has(lower)) {
+    if (routeMap.has(lower) && lower !== 'reference' && lower !== 'concept') {
       return {
         targetFolder: routeMap.get(lower)!,
         matchedByTag: tag,
         matchedProjectId: null
       };
     }
-    if (
-      lower.startsWith('domain/ai') ||
-      lower === 'domain/machine-learning' ||
-      lower === 'domain/quantum-computing' ||
-      lower === 'domain/cryptography' ||
-      lower === 'domain/cybersecurity' ||
-      lower === 'domain/software' ||
-      lower.startsWith('system/')
-    ) {
+    if (techSet.has(lower)) {
       return {
         targetFolder: '03_Knowledge/Technical',
         matchedByTag: tag,
         matchedProjectId: null
       };
     }
-    if (
-      lower === 'domain/film' ||
-      lower === 'domain/transmedia' ||
-      lower === 'domain/storytelling' ||
-      lower === 'domain/arg'
-    ) {
+    if (scriptSet.has(lower)) {
       return {
         targetFolder: '03_Knowledge/Scripts',
         matchedByTag: tag,
         matchedProjectId: null
       };
     }
-    if (lower === 'domain/music') {
+    if (lower === 'music') {
       return {
         targetFolder: '03_Knowledge/Songs',
         matchedByTag: tag,
         matchedProjectId: null
       };
     }
-    if (
-      lower === 'domain/business' ||
-      lower === 'domain/funding' ||
-      lower === 'domain/strategy' ||
-      lower === 'domain/operations' ||
-      lower === 'domain/personal' ||
-      lower === 'domain/network'
-    ) {
+    if (bizSet.has(lower)) {
       return {
         targetFolder: '02_Areas/Business',
         matchedByTag: tag,
@@ -1331,14 +1303,13 @@ export function resolveDirectoryFromTags(params: {
     }
   }
 
-  // 7. Fallback to any remaining `type/...` tag or default folder
-  if (typeTags.length > 0) {
-    const firstType = typeTags[0];
-    const mapped = routeMap.get(firstType.toLowerCase());
+  // 4. Fallback to any remaining mapped tag or default folder
+  for (const tag of cleanTags) {
+    const mapped = routeMap.get(tag.toLowerCase());
     if (mapped) {
       return {
         targetFolder: mapped,
-        matchedByTag: firstType,
+        matchedByTag: tag,
         matchedProjectId: null
       };
     }
@@ -1352,9 +1323,7 @@ export function resolveDirectoryFromTags(params: {
 }
 
 /**
- * Qualitatively determines the structured Orthogonal Taxonomy tag set for a note.
- * Ensures the number of tags is bounded (not a word-salad) and answers the core orthogonal questions:
- * TYPE -> DOMAIN -> PROJECT/RESEARCH -> SYSTEM/CONCEPT -> KNOWLEDGE -> STATUS -> STAGE -> PRIORITY.
+ * Qualitatively determines the structured Orthogonal Taxonomy tag set for a note using 100% clean, slash-free tags.
  */
 export function curateOrthogonalTags(params: {
   rawTags?: unknown[];
@@ -1396,39 +1365,47 @@ export function curateOrthogonalTags(params: {
     custom: new Set()
   };
 
-  const assignTag = (tag: string) => {
-    const clean = normalizeToCanonicalTag(tag.replace(/^#+/, '').trim());
-    if (!isValidSemanticTag(clean, { allowSingleLetter: false })) return;
-    const lower = clean.toLowerCase();
+  // Build axis membership map from DEFAULT_TAG_TAXONOMY + customAxes + projectProfiles
+  const axisByTagLower = new Map<string, string>();
+  for (const ax of [...DEFAULT_TAG_TAXONOMY, ...customAxes]) {
+    const axId = selectedByAxis[ax.id] ? ax.id : 'custom';
+    for (const t of ax.tags) {
+      const clean = stripTagPrefix(t);
+      if (clean && !axisByTagLower.has(clean.toLowerCase())) {
+        axisByTagLower.set(clean.toLowerCase(), axId);
+        CANONICAL_TAG_MAP.set(clean.toLowerCase(), clean);
+      }
+    }
+  }
+  for (const prof of projectProfiles) {
+    const pTag = stripTagPrefix(prof.projectTag) || prof.id;
+    if (pTag) {
+      axisByTagLower.set(pTag.toLowerCase(), 'project');
+      CANONICAL_TAG_MAP.set(pTag.toLowerCase(), pTag);
+    }
+  }
 
-    if (lower === 'ru' || lower === 'en') {
+  const assignTag = (tag: string) => {
+    const stripped = stripTagPrefix(tag);
+    if (!stripped) return;
+    const mapped = LEGACY_TO_TAXONOMY_MAP[stripped.toLowerCase()] || normalizeToCanonicalTag(stripped);
+    if (!isValidSemanticTag(mapped, { allowSingleLetter: false })) return;
+    const lower = mapped.toLowerCase();
+
+    if (lower === 'ru' || lower === 'en' || lower === 'ph') {
       selectedByAxis.lang.add(lower);
       return;
     }
 
-    // Check if it maps from a legacy flat word to a structured taxonomy tag
-    const mapped = LEGACY_TO_TAXONOMY_MAP[lower] || clean;
-    const mappedLower = mapped.toLowerCase();
-
-    if (mappedLower.startsWith('type/')) selectedByAxis.type.add(mapped);
-    else if (mappedLower.startsWith('domain/')) selectedByAxis.domain.add(mapped);
-    else if (mappedLower.startsWith('project/') || mappedLower.startsWith('research/')) selectedByAxis.project.add(mapped);
-    else if (mappedLower.startsWith('system/') || mappedLower.startsWith('concept/')) selectedByAxis.system.add(mapped);
-    else if (mappedLower.startsWith('knowledge/')) selectedByAxis.knowledge.add(mapped);
-    else if (mappedLower.startsWith('status/')) selectedByAxis.status.add(mapped);
-    else if (mappedLower.startsWith('stage/')) selectedByAxis.stage.add(mapped);
-    else if (mappedLower.startsWith('priority/')) selectedByAxis.priority.add(mapped);
-    else if (mappedLower.startsWith('relation/')) selectedByAxis.relation.add(mapped);
-    else if (DEFAULT_TAG_TAXONOMY[0].tags.includes(mappedLower)) selectedByAxis.root.add(mappedLower);
-    else if (mapped.includes('/')) {
-      selectedByAxis.custom.add(mapped);
+    const targetAxisId = axisByTagLower.get(lower);
+    if (targetAxisId && selectedByAxis[targetAxisId]) {
+      selectedByAxis[targetAxisId].add(mapped);
     } else if (!replaceExisting) {
-      // Only keep unmapped flat tags if not in strict taxonomy replacement mode
       selectedByAxis.custom.add(mapped);
     }
   };
 
-  // 1. Process raw/existing tags through the taxonomy mapper
+  // 1. Process raw/existing tags through the clean taxonomy mapper
   for (const t of rawTags) {
     if (typeof t === 'string' || typeof t === 'number') {
       assignTag(String(t));
@@ -1451,19 +1428,20 @@ export function curateOrthogonalTags(params: {
     projectProfiles
   });
   if (projectInference.matchedProjectTag) {
-    selectedByAxis.project.add(projectInference.matchedProjectTag);
+    const cleanPTag = stripTagPrefix(projectInference.matchedProjectTag);
+    if (cleanPTag) selectedByAxis.project.add(cleanPTag);
     for (const assoc of projectInference.matchedAssociatedTags) {
       assignTag(assoc);
     }
   }
 
-  // Also check custom user-imported axes for any tag whose leaf keyword explicitly appears in the note header/text
+  // Also check custom user-imported axes for any tag whose keyword explicitly appears in the note header
   if (customAxes.length > 0) {
     for (const axis of customAxes) {
       for (const axisTag of axis.tags) {
-        const leaf = axisTag.includes('/') ? axisTag.split('/').pop()! : axisTag;
-        if (leaf.length >= 4 && combinedHeader.includes(leaf.toLowerCase().replace(/[_-]+/g, ' '))) {
-          assignTag(axisTag);
+        const cleanTag = stripTagPrefix(axisTag);
+        if (cleanTag.length >= 4 && combinedHeader.includes(cleanTag.toLowerCase().replace(/[_-]+/g, ' '))) {
+          assignTag(cleanTag);
         }
       }
     }
@@ -1471,68 +1449,68 @@ export function curateOrthogonalTags(params: {
 
   // Infer L1: TYPE (at least 1 primary object type)
   if (selectedByAxis.type.size === 0) {
-    if (/whitepaper|вайтпейпер/i.test(combinedText)) {
-      selectedByAxis.type.add('type/whitepaper');
-    } else if (/сценарий|screenplay|инт\.|нат\.|эпизод|перфоманс/i.test(combinedText) || folderLower.includes('scripts')) {
-      selectedByAxis.type.add('type/scenario');
-    } else if (/встреч|совещан|agenda|meeting|action item|повестк/i.test(combinedHeader) || folderLower.includes('dialogues')) {
-      selectedByAxis.type.add('type/meeting');
-    } else if (/протокол|protocol/i.test(combinedHeader)) {
-      selectedByAxis.type.add('type/protocol');
-    } else if (/исследован|research|гипотез|квантовани|hypergraph|гиперграф/i.test(combinedHeader)) {
-      selectedByAxis.type.add('type/research');
-    } else if (/идея|инновационн|брейншторм|idea/i.test(combinedHeader) || folderLower.includes('05_ideas')) {
-      selectedByAxis.type.add('type/idea');
-    } else if (/задач|чек-лист|todo|task/i.test(combinedHeader)) {
-      selectedByAxis.type.add('type/task');
+    if (/whitepaper|\u0432\u0430\u0439\u0442\u043f\u0435\u0439\u043f\u0435\u0440/i.test(combinedText)) {
+      selectedByAxis.type.add('whitepaper');
+    } else if (/\u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439|screenplay|\u0438\u043d\u0442\.|\u043d\u0430\u0442\.|\u044d\u043f\u0438\u0437\u043e\u0434|\u043f\u0435\u0440\u0444\u043e\u043c\u0430\u043d\u0441/i.test(combinedText) || folderLower.includes('scripts')) {
+      selectedByAxis.type.add('scenario');
+    } else if (/\u0432\u0441\u0442\u0440\u0435\u0447|\u0441\u043e\u0432\u0435\u0449\u0430\u043d|agenda|meeting|action item|\u043f\u043e\u0432\u0435\u0441\u0442\u043a/i.test(combinedHeader) || folderLower.includes('dialogues')) {
+      selectedByAxis.type.add('meeting');
+    } else if (/\u043f\u0440\u043e\u0442\u043e\u043a\u043e\u043b|protocol/i.test(combinedHeader)) {
+      selectedByAxis.type.add('protocol');
+    } else if (/\u0438\u0441\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u043d|research|\u0433\u0438\u043f\u043e\u0442\u0435\u0437|\u043a\u0432\u0430\u043d\u0442\u043e\u0432\u0430\u043d\u0438|hypergraph|\u0433\u0438\u043f\u0435\u0440\u0433\u0440\u0430\u0444/i.test(combinedHeader)) {
+      selectedByAxis.type.add('research');
+    } else if (/\u0438\u0434\u0435\u044f|\u0438\u043d\u043d\u043e\u0432\u0430\u0446\u0438\u043e\u043d\u043d|\u0431\u0440\u0435\u0439\u043d\u0448\u0442\u043e\u0440\u043c|idea/i.test(combinedHeader) || folderLower.includes('05_ideas')) {
+      selectedByAxis.type.add('idea');
+    } else if (/\u0437\u0430\u0434\u0430\u0447|\u0447\u0435\u043a-\u043b\u0438\u0441\u0442|todo|task/i.test(combinedHeader)) {
+      selectedByAxis.type.add('task');
     } else if (
-      /проект|project|дорожн\w+ карт\w+|roadmap|запуск|франшиз/i.test(combinedHeader) ||
+      /\u043f\u0440\u043e\u0435\u043a\u0442|project|\u0434\u043e\u0440\u043e\u0436\u043d\w+ \u043a\u0430\u0440\u0442\w+|roadmap|\u0437\u0430\u043f\u0443\u0441\u043a|\u0444\u0440\u0430\u043d\u0448\u0438\u0437/i.test(combinedHeader) ||
       folderLower.startsWith('01_projects') ||
-      Array.from(selectedByAxis.project).some(p => p.toLowerCase().startsWith('project/'))
+      selectedByAxis.project.size > 0
     ) {
-      selectedByAxis.type.add('type/project');
-    } else if (/концепт|concept|философи|смыслии/i.test(combinedHeader)) {
-      selectedByAxis.type.add('type/concept');
+      selectedByAxis.type.add('project');
+    } else if (/\u043a\u043e\u043d\u0446\u0435\u043f\u0442|concept|\u0444\u0438\u043b\u043e\u0441\u043e\u0444\u0438|\u0441\u043c\u044b\u0441\u043b\u0438\u0438/i.test(combinedHeader)) {
+      selectedByAxis.type.add('concept');
     } else {
-      selectedByAxis.type.add('type/reference');
+      selectedByAxis.type.add('reference');
     }
   }
 
   // Infer L2: DOMAIN (up to 2 most relevant domains)
-  if (/hermes|агент|agent|multi-agent|мультиагент/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/AI/agents');
+  if (/hermes|\u0430\u0433\u0435\u043d\u0442|agent|multi-agent|\u043c\u0443\u043b\u044c\u0442\u0438\u0430\u0433\u0435\u043d\u0442/i.test(combinedText)) {
+    selectedByAxis.domain.add('agents');
   }
-  if (/llm|llama|qwen|gguf|промпт|prompt|языков\w+ модел/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/AI/LLM');
-  } else if (/ии|искусственн\w+ интеллект|нейросет|\bai\b/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/AI');
+  if (/llm|llama|qwen|gguf|\u043f\u0440\u043e\u043c\u043f\u0442|prompt|\u044f\u0437\u044b\u043a\u043e\u0432\w+ \u043c\u043e\u0434\u0435\u043b/i.test(combinedText)) {
+    selectedByAxis.domain.add('LLM');
+  } else if (/\u0438\u0438|\u0438\u0441\u043a\u0443\u0441\u0441\u0442\u0432\u0435\u043d\u043d\w+ \u0438\u043d\u0442\u0435\u043b\u043b\u0435\u043a\u0442|\u043d\u0435\u0439\u0440\u043e\u0441\u0435\u0442|\bai\b/i.test(combinedText)) {
+    selectedByAxis.domain.add('AI');
   }
-  if (/гиперграф|hypergraph/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/hypergraph');
+  if (/\u0433\u0438\u043f\u0435\u0440\u0433\u0440\u0430\u0444|hypergraph/i.test(combinedText)) {
+    selectedByAxis.domain.add('hypergraph');
   }
-  if (/семантик|semantic|таксономи|taxonomy|онтологи|ontology/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/semantics');
+  if (/\u0441\u0435\u043c\u0430\u043d\u0442\u0438\u043a|semantic|\u0442\u0430\u043a\u0441\u043e\u043d\u043e\u043c\u0438|taxonomy|\u043e\u043d\u0442\u043e\u043b\u043e\u0433\u0438|ontology/i.test(combinedText)) {
+    selectedByAxis.domain.add('semantics');
   }
-  if (/баз\w+ знаний|obsidian|vault|knowledge management/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/knowledge-management');
+  if (/\u0431\u0430\u0437\w+ \u0437\u043d\u0430\u043d\u0438\u0439|obsidian|vault|knowledge management/i.test(combinedText)) {
+    selectedByAxis.domain.add('knowledge-management');
   }
-  if (/философ|свобод\w+ выбор|сознани|этик|смысл/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/philosophy');
+  if (/\u0444\u0438\u043b\u043e\u0441\u043e\u0444|\u0441\u0432\u043e\u0431\u043e\u0434\w+ \u0432\u044b\u0431\u043e\u0440|\u0441\u043e\u0437\u043d\u0430\u043d\u0438|\u044d\u0442\u0438\u043a|\u0441\u043c\u044b\u0441\u043b/i.test(combinedText)) {
+    selectedByAxis.domain.add('philosophy');
   }
-  if (/фильм|кино|фестивал|сценари|драматург|film/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/film');
+  if (/\u0444\u0438\u043b\u044c\u043c|\u043a\u0438\u043d\u043e|\u0444\u0435\u0441\u0442\u0438\u0432\u0430\u043b|\u0441\u0446\u0435\u043d\u0430\u0440\u0438|\u0434\u0440\u0430\u043c\u0430\u0442\u0443\u0440\u0433|film/i.test(combinedText)) {
+    selectedByAxis.domain.add('film');
   }
-  if (/трансмедиа|transmedia|arg\b|перфоманс/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/transmedia');
+  if (/\u0442\u0440\u0430\u043d\u0441\u043c\u0435\u0434\u0438\u0430|transmedia|arg\b|\u043f\u0435\u0440\u0444\u043e\u043c\u0430\u043d\u0441/i.test(combinedText)) {
+    selectedByAxis.domain.add('transmedia');
   }
-  if (/бизнес|франшиз|производств|монетизац|рынок|маркетинг/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/business');
+  if (/\u0431\u0438\u0437\u043d\u0435\u0441|\u0444\u0440\u0430\u043d\u0448\u0438\u0437|\u043f\u0440\u043e\u0438\u0437\u0432\u043e\u0434\u0441\u0442\u0432|\u043c\u043e\u043d\u0435\u0442\u0438\u0437\u0430\u0446|\u0440\u044b\u043d\u043e\u043a|\u043c\u0430\u0440\u043a\u0435\u0442\u0438\u043d\u0433/i.test(combinedText)) {
+    selectedByAxis.domain.add('business');
   }
-  if (/экономик|economy/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/economy');
+  if (/\u044d\u043a\u043e\u043d\u043e\u043c\u0438\u043a|economy/i.test(combinedText)) {
+    selectedByAxis.domain.add('economy');
   }
-  if (/код|сервер|api|typescript|python|node|архитектур\w+ по|software/i.test(combinedText)) {
-    selectedByAxis.domain.add('domain/software');
+  if (/\u043a\u043e\u0434|\u0441\u0435\u0440\u0432\u0435\u0440|api|typescript|python|node|\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\w+ \u043f\u043e|software/i.test(combinedText)) {
+    selectedByAxis.domain.add('software');
   }
 
   // Infer L3: PROJECT / RESEARCH (from dynamic vault projects + canonical research)
@@ -1543,80 +1521,78 @@ export function curateOrthogonalTags(params: {
       return combinedText.includes(alias.toLowerCase());
     });
     if (matched || folderLower === proj.folder.toLowerCase()) {
-      selectedByAxis.project.add(`project/${folderName.replace(/\s+/g, '-')}`);
+      const cleanProj = stripTagPrefix(folderName.replace(/\s+/g, '-'));
+      if (cleanProj) {
+        CANONICAL_TAG_MAP.set(cleanProj.toLowerCase(), cleanProj);
+        selectedByAxis.project.add(cleanProj);
+      }
     }
   }
-  if (/hermes/i.test(combinedText)) selectedByAxis.project.add('project/Hermes');
+  if (/hermes/i.test(combinedText)) selectedByAxis.project.add('Hermes');
   if (/obsidian.*pipeline|local llm pipeline|jev.*router/i.test(combinedText)) {
-    selectedByAxis.project.add('project/Obsidian-LLM-Pipeline');
+    selectedByAxis.project.add('Obsidian-LLM-Pipeline');
   }
-  if (/neuromicon|нейромикон|1149/i.test(combinedText)) {
-    selectedByAxis.project.add('project/Neuromicon');
+  if (/neuromicon|\u043d\u0435\u0439\u0440\u043e\u043c\u0438\u043a\u043e\u043d|1149/i.test(combinedText)) {
+    selectedByAxis.project.add('Neuromicon');
   }
-  if (/escape2reality/i.test(combinedText)) selectedByAxis.project.add('project/Escape2Reality');
-  if (/uucpff/i.test(combinedText)) selectedByAxis.project.add('project/UUCPFF');
-  if (/totem|тотем/i.test(combinedText)) selectedByAxis.project.add('project/TOTEM');
-  if (/restore[\s-]*dumaguete/i.test(combinedText)) selectedByAxis.project.add('project/Restore-Dumaguete');
-  if (/semantic[\s-]*hypergraph|семантическ\w+ гиперграф/i.test(combinedText)) {
-    selectedByAxis.project.add('research/semantic-hypergraph');
+  if (/escape2reality/i.test(combinedText)) selectedByAxis.project.add('Escape2Reality');
+  if (/uucpff/i.test(combinedText)) selectedByAxis.project.add('UUCPFF');
+  if (/totem|\u0442\u043e\u0442\u0435\u043c/i.test(combinedText)) selectedByAxis.project.add('TOTEM');
+  if (/restore[\s-]*dumaguete/i.test(combinedText)) selectedByAxis.project.add('Restore-Dumaguete');
+  if (/semantic[\s-]*hypergraph|\u0441\u0435\u043c\u0430\u043d\u0442\u0438\u0447\u0435\u0441\u043a\w+ \u0433\u0438\u043f\u0435\u0440\u0433\u0440\u0430\u0444/i.test(combinedText)) {
+    selectedByAxis.project.add('semantic-hypergraph');
   }
   if (/jev[\s-]*response|jev[\s-]*decision/i.test(combinedText)) {
-    selectedByAxis.project.add('research/JeV-response');
+    selectedByAxis.project.add('JeV-response');
   }
 
   // Infer L4: SYSTEM / CONCEPT
-  if (/системн\w+ промпт|system prompt|оркестрац|orchestration/i.test(combinedText)) {
-    selectedByAxis.system.add('system/agent-orchestration');
+  if (/\u0441\u0438\u0441\u0442\u0435\u043c\u043d\w+ \u043f\u0440\u043e\u043c\u043f\u0442|system prompt|\u043e\u0440\u043a\u0435\u0441\u0442\u0440\u0430\u0446|orchestration/i.test(combinedText)) {
+    selectedByAxis.system.add('agent-orchestration');
   }
-  if (/маршрутизац|routing|router/i.test(combinedText)) {
-    selectedByAxis.system.add('system/routing');
+  if (/\u043c\u0430\u0440\u0448\u0440\u0443\u0442\u0438\u0437\u0430\u0446|routing|router/i.test(combinedText)) {
+    selectedByAxis.system.add('routing');
   }
-  if (/классификац|classification|triage|триаж/i.test(combinedText)) {
-    selectedByAxis.system.add('system/classification');
+  if (/\u043a\u043b\u0430\u0441\u0441\u0438\u0444\u0438\u043a\u0430\u0446|classification|triage|\u0442\u0440\u0438\u0430\u0436/i.test(combinedText)) {
+    selectedByAxis.system.add('classification');
   }
-  if (/тегирован|таксономи\w+ тег|tagging/i.test(combinedText)) {
-    selectedByAxis.system.add('system/tagging');
+  if (/\u0442\u0435\u0433\u0438\u0440\u043e\u0432\u0430\u043d|\u0442\u0430\u043a\u0441\u043e\u043d\u043e\u043c\u0438\w+ \u0442\u0435\u0433|tagging/i.test(combinedText)) {
+    selectedByAxis.system.add('tagging');
   }
   if (/1149|world-1149/i.test(combinedText)) {
-    selectedByAxis.system.add('concept/World-1149');
+    selectedByAxis.system.add('World-1149');
   }
 
   // Infer Knowledge Axis
-  if (/техническ\w+ задани|\bтз\b|спецификац|specification|требовани/i.test(combinedHeader)) {
-    selectedByAxis.knowledge.add('knowledge/specification');
-  } else if (/гипотез|предположен|hypothesis/i.test(combinedText)) {
-    selectedByAxis.knowledge.add('knowledge/hypothesis');
-  } else if (/модел\w+|структур\w+|архитектур\w+|таксономи/i.test(combinedHeader)) {
-    selectedByAxis.knowledge.add('knowledge/model');
-  } else if (/решени\w+|decision|итог/i.test(combinedHeader)) {
-    selectedByAxis.knowledge.add('knowledge/decision');
+  if (/\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\w+ \u0437\u0430\u0434\u0430\u043d\u0438|\b\u0442\u0437\b|\u0441\u043f\u0435\u0446\u0438\u0444\u0438\u043a\u0430\u0446|specification|\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438/i.test(combinedHeader)) {
+    selectedByAxis.knowledge.add('specification');
+  } else if (/\u0433\u0438\u043f\u043e\u0442\u0435\u0437|\u043f\u0440\u0435\u0434\u043f\u043e\u043b\u043e\u0436\u0435\u043d|hypothesis/i.test(combinedText)) {
+    selectedByAxis.knowledge.add('hypothesis');
+  } else if (/\u043c\u043e\u0434\u0435\u043b\w+|\u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\w+|\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\w+|\u0442\u0430\u043a\u0441\u043e\u043d\u043e\u043c\u0438/i.test(combinedHeader)) {
+    selectedByAxis.knowledge.add('model');
+  } else if (/\u0440\u0435\u0448\u0435\u043d\u0438\w+|decision|\u0438\u0442\u043e\u0433/i.test(combinedHeader)) {
+    selectedByAxis.knowledge.add('decision');
   }
 
   // Infer L5: STATUS & L7: STAGE (when relevant)
   if (selectedByAxis.status.size === 0) {
-    if (selectedByAxis.type.has('type/idea')) {
-      selectedByAxis.status.add('status/idea');
-    } else if (selectedByAxis.type.has('type/research')) {
-      selectedByAxis.status.add('status/research');
-    } else if (selectedByAxis.type.has('type/project') || selectedByAxis.project.size > 0) {
-      selectedByAxis.status.add('status/active');
+    if (selectedByAxis.type.has('idea')) {
+      selectedByAxis.status.add('idea');
+    } else if (selectedByAxis.type.has('project') || selectedByAxis.project.size > 0) {
+      selectedByAxis.status.add('active');
     }
   }
 
   if (selectedByAxis.stage.size === 0) {
-    if (/дорожн\w+ карт\w+|roadmap|план запуск|концепц|архитектур|структур/i.test(combinedHeader)) {
-      selectedByAxis.stage.add('stage/design');
-    } else if (/реализац|внедрен|implementation|разработк/i.test(combinedHeader)) {
-      selectedByAxis.stage.add('stage/implementation');
-    } else if (/проверк|тестирован|валидац|validation/i.test(combinedHeader)) {
-      selectedByAxis.stage.add('stage/validation');
-    } else if (selectedByAxis.type.has('type/research')) {
-      selectedByAxis.stage.add('stage/research');
+    if (/\u0434\u043e\u0440\u043e\u0436\u043d\w+ \u043a\u0430\u0440\u0442\w+|roadmap|\u043f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a|\u043a\u043e\u043d\u0446\u0435\u043f\u0446|\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440|\u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440/i.test(combinedHeader)) {
+      selectedByAxis.stage.add('design');
+    } else if (/\u0440\u0435\u0430\u043b\u0438\u0437\u0430\u0446|\u0432\u043d\u0435\u0434\u0440\u0435\u043d|implementation|\u0440\u0430\u0437\u0440\u0430\u0431\u043e\u0442\u043a/i.test(combinedHeader)) {
+      selectedByAxis.stage.add('implementation');
+    } else if (/\u043f\u0440\u043e\u0432\u0435\u0440\u043a|\u0442\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d|\u0432\u0430\u043b\u0438\u0434\u0430\u0446|validation/i.test(combinedHeader)) {
+      selectedByAxis.stage.add('validation');
     }
   }
 
-  // Assemble bounded, high-quality orthogonal tag set in canonical order:
-  // [type (max 1-2), domain (max 2), project/research (max 2), system/concept (max 2), knowledge (max 1), status (max 1), stage (max 1), priority (max 1), root (max 1), lang]
   const ordered: string[] = [
     ...Array.from(selectedByAxis.type).slice(0, 2),
     ...Array.from(selectedByAxis.domain).slice(0, 2),
@@ -1671,7 +1647,7 @@ export async function loadVaultTagTaxonomyConfig(
           for (const customAxis of raw.axes) {
             if (!customAxis || !customAxis.id || !Array.isArray(customAxis.tags)) continue;
             for (const t of customAxis.tags) {
-              const cleanT = String(t).trim().replace(/^#+/, '').trim();
+              const cleanT = normalizeToCanonicalTag(String(t));
               if (cleanT) CANONICAL_TAG_MAP.set(cleanT.toLowerCase(), cleanT);
             }
             const target = axes.find(a => a.id === customAxis.id);
@@ -1683,7 +1659,7 @@ export async function loadVaultTagTaxonomyConfig(
                 level: String(customAxis.level || 'Custom'),
                 label: String(customAxis.label || customAxis.id),
                 question: String(customAxis.question || ''),
-                prefix: String(customAxis.prefix || `${customAxis.id}/`),
+                prefix: '',
                 tags: sanitizeTagList(customAxis.tags, { allowSingleLetter: false })
               });
             }
@@ -1692,10 +1668,17 @@ export async function loadVaultTagTaxonomyConfig(
         if (Array.isArray(raw.projectProfiles)) {
           for (const prof of raw.projectProfiles) {
             if (!prof || !prof.id || !prof.projectTag) continue;
-            const pTag = String(prof.projectTag).trim().replace(/^#+/, '');
+            const pTag = normalizeToCanonicalTag(String(prof.projectTag));
+            if (!pTag) continue;
             CANONICAL_TAG_MAP.set(pTag.toLowerCase(), pTag);
-            const assoc = Array.isArray(prof.associatedTags)
-              ? prof.associatedTags.map((t: unknown) => String(t).trim().replace(/^#+/, '')).filter(Boolean)
+            const assoc: string[] = Array.isArray(prof.associatedTags)
+              ? Array.from(
+                  new Set(
+                    prof.associatedTags
+                      .map((t: unknown) => normalizeToCanonicalTag(String(t)))
+                      .filter((t: string): t is string => Boolean(t))
+                  )
+                )
               : [pTag];
             for (const at of assoc) {
               CANONICAL_TAG_MAP.set(at.toLowerCase(), at);
@@ -1713,7 +1696,10 @@ export async function loadVaultTagTaxonomyConfig(
         if (raw.tagRoutes && typeof raw.tagRoutes === 'object') {
           for (const [k, v] of Object.entries(raw.tagRoutes)) {
             if (typeof k === 'string' && typeof v === 'string' && k.trim() && v.trim()) {
-              tagRoutes[k.trim().replace(/^#+/, '')] = v.trim();
+              const cleanKey = normalizeToCanonicalTag(k);
+              if (cleanKey) {
+                tagRoutes[cleanKey] = v.trim();
+              }
             }
           }
         }
@@ -1721,14 +1707,14 @@ export async function loadVaultTagTaxonomyConfig(
     }
   }
 
-  // Dynamically inject discovered Vault projects into L3 (`project/...`), `projectProfiles`, and `tagRoutes`
+  // Dynamically inject discovered Vault projects into L3, `projectProfiles`, and `tagRoutes`
   const projectAxis = axes.find(a => a.id === 'project');
   if (discoveredProjects.length > 0) {
     const existingLower = new Set((projectAxis?.tags || []).map(t => t.toLowerCase()));
     for (const proj of discoveredProjects) {
       const folderName = (proj.folder.split('/').pop() || proj.id).trim().replace(/\s+/g, '-');
       if (!folderName) continue;
-      const projTag = `project/${folderName}`;
+      const projTag = normalizeToCanonicalTag(folderName) || folderName;
       CANONICAL_TAG_MAP.set(projTag.toLowerCase(), projTag);
       if (projectAxis && !existingLower.has(projTag.toLowerCase())) {
         existingLower.add(projTag.toLowerCase());
@@ -1753,20 +1739,20 @@ export async function loadVaultTagTaxonomyConfig(
     }
   }
 
-  // Also ensure every `project/<Name>` or `research/<Name>` in `projectAxis` has a profile and route
+  // Also ensure every project/research tag in `projectAxis` has a profile and route
   if (projectAxis) {
     for (const pTag of projectAxis.tags) {
-      const lower = pTag.toLowerCase();
+      const cleanPTag = normalizeToCanonicalTag(pTag) || pTag;
+      const lower = cleanPTag.toLowerCase();
       if (!profilesMap.has(lower)) {
-        const isRes = lower.startsWith('research/');
-        const name = pTag.includes('/') ? pTag.split('/').slice(1).join('/') : pTag;
-        const defaultFolder = isRes ? `03_Knowledge/Research/${name}` : `${projectsRoot}/${name}`;
+        const isRes = KNOWN_RESEARCH_IDS.has(lower);
+        const defaultFolder = isRes ? `03_Knowledge/Research/${cleanPTag}` : `${projectsRoot}/${cleanPTag}`;
         profilesMap.set(lower, {
-          id: name,
-          projectTag: pTag,
-          targetFolder: tagRoutes[pTag] || defaultFolder,
-          associatedTags: [pTag],
-          aliases: [name, name.replace(/[-_]+/g, ' ')]
+          id: cleanPTag,
+          projectTag: cleanPTag,
+          targetFolder: tagRoutes[cleanPTag] || defaultFolder,
+          associatedTags: [cleanPTag],
+          aliases: [cleanPTag, cleanPTag.replace(/[-_]+/g, ' ')]
         });
       }
       const prof = profilesMap.get(lower)!;
@@ -1817,11 +1803,36 @@ export async function saveVaultTagTaxonomyConfig(
     } catch {}
   }
 
+  const cleanAxes = config.axes.map(ax => ({
+    ...ax,
+    prefix: '',
+    tags: sanitizeTagList(ax.tags, { allowSingleLetter: false })
+  }));
+
+  const cleanProfiles = (config.projectProfiles || existingProfiles).map(prof => {
+    const pTag = normalizeToCanonicalTag(prof.projectTag) || prof.id;
+    const assoc = Array.from(
+      new Set([pTag, ...(prof.associatedTags || []).map(t => normalizeToCanonicalTag(t)).filter(Boolean)])
+    );
+    return {
+      ...prof,
+      projectTag: pTag,
+      associatedTags: assoc
+    };
+  });
+
+  const rawRoutes = config.tagRoutes || existingRoutes;
+  const cleanRoutes: Record<string, string> = {};
+  for (const [k, v] of Object.entries(rawRoutes)) {
+    const cleanKey = normalizeToCanonicalTag(k);
+    if (cleanKey && v) cleanRoutes[cleanKey] = v;
+  }
+
   const payload: VaultTagTaxonomyConfig = {
     updatedAt: new Date().toISOString(),
-    axes: config.axes,
-    projectProfiles: config.projectProfiles || existingProfiles,
-    tagRoutes: config.tagRoutes || existingRoutes
+    axes: cleanAxes,
+    projectProfiles: cleanProfiles,
+    tagRoutes: cleanRoutes
   };
 
   await fsPromises.writeFile(targetFile, JSON.stringify(payload, null, 2), 'utf-8');
@@ -1853,9 +1864,10 @@ export async function saveVaultTagTaxonomy(
 
 /**
  * Universal parser for user-supplied tag lists and project-hashtag files (e.g. `project-hashtags-expanded.md`, JSON, YAML, or plain text).
- * Extracts:
- * - Multi-level taxonomy axes (`L0`..`L7`, `knowledge`, `relation`, plus any custom prefixes)
- * - Project Hashtag Profiles (`#project/<Name>` + associated `#system/...`, `#concept/...`, `#domain/...` tags & aliases)
+ * Normalizes all imported tags into 100% clean, slash-free tags (e.g. `Hermes`, `agent-orchestration`, `World-1149`)
+ * while extracting:
+ * - Multi-level taxonomy axes (`L0`..`L7`, `knowledge`, `relation`)
+ * - Project Hashtag Profiles (`Hermes` + associated subsystem/concept/domain tags & aliases)
  * - Tag-to-Directory routing rules (`tagRoutes`)
  */
 export function parseTagTaxonomyImport(
@@ -1898,15 +1910,51 @@ export function parseTagTaxonomyImport(
 
   const parsedTagsSet = new Set<string>();
   const touchedProjects = new Set<string>();
+  const explicitlyMarkedProjectTags = new Set<string>();
+  const explicitlyMarkedResearchTags = new Set<string>();
 
-  const registerTagInAxes = (rawTag: string): string | null => {
-    const clean = rawTag
+  const inferAxisIdFromHeading = (heading?: string): string | undefined => {
+    if (!heading) return undefined;
+    const h = heading.toLowerCase();
+    if (/\bl0\b|root|\u0441\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0439 \u0443\u0440\u043e\u0432\u0435\u043d\u044c/.test(h)) return 'root';
+    if (/\bl1\b|object type|\u0442\u0438\u043f \u043e\u0431\u044a\u0435\u043a\u0442\u0430/.test(h)) return 'type';
+    if (/\bl2\b|domain|\u0434\u043e\u043c\u0435\u043d/.test(h)) return 'domain';
+    if (/\bl3\b|\u043a\u043e\u043d\u043a\u0440\u0435\u0442\u043d\u044b\u0435 \u0441\u0438\u0441\u0442\u0435\u043c\u044b|named project/.test(h)) return 'project';
+    if (/\bl4\b|subsystem|\u0444\u0443\u043d\u043a\u0446\u0438\u044f|\u043f\u043e\u0434\u0441\u0438\u0441\u0442\u0435\u043c\u0430/.test(h)) return 'system';
+    if (/\bl5\b|status|\u0441\u0442\u0430\u0442\u0443\u0441/.test(h)) return 'status';
+    if (/\bl6\b|priority|\u043f\u0440\u0438\u043e\u0440\u0438\u0442\u0435\u0442/.test(h)) return 'priority';
+    if (/\bl7\b|stage|\u0441\u0442\u0430\u0434\u0438\u044f/.test(h)) return 'stage';
+    if (/epistemic|knowledge|content|\u044d\u043f\u0438\u0441\u0442\u0435\u043c\u0438\u0447\u0435\u0441\u043a/.test(h)) return 'knowledge';
+    if (/relation|\u0441\u0432\u044f\u0437/.test(h)) return 'relation';
+    return undefined;
+  };
+
+  const registerTagInAxes = (rawTag: string, axisHint?: string): string | null => {
+    const rawTrimmed = rawTag
       .trim()
       .replace(/^#+/, '')
       .replace(/[,:;.)\]}`]+$/, '')
       .replace(/^['"`(\[{]+/, '')
       .replace(/\/+$/, '')
       .trim();
+    if (!rawTrimmed || rawTrimmed.length < 2 || rawTrimmed.length > 65) return null;
+
+    const rawLower = rawTrimmed.toLowerCase();
+    let prefixAxis: string | undefined;
+    if (rawLower.startsWith('type/')) prefixAxis = 'type';
+    else if (rawLower.startsWith('domain/')) prefixAxis = 'domain';
+    else if (rawLower.startsWith('project/')) {
+      prefixAxis = 'project';
+    } else if (rawLower.startsWith('research/')) {
+      prefixAxis = 'project';
+    } else if (rawLower.startsWith('system/') || rawLower.startsWith('concept/')) prefixAxis = 'system';
+    else if (rawLower.startsWith('status/')) prefixAxis = 'status';
+    else if (rawLower.startsWith('priority/')) prefixAxis = 'priority';
+    else if (rawLower.startsWith('stage/')) prefixAxis = 'stage';
+    else if (rawLower.startsWith('knowledge/') || rawLower.startsWith('content/')) prefixAxis = 'knowledge';
+    else if (rawLower.startsWith('relation/')) prefixAxis = 'relation';
+
+    const clean = normalizeToCanonicalTag(rawTrimmed);
     if (!clean || clean.length < 2 || clean.length > 65) return null;
     if (/^\d+$/.test(clean) || /^[0-9a-f]{3,6}$/i.test(clean)) return null;
     if (BANNED_TAG_WORDS.has(clean.toLowerCase())) return null;
@@ -1917,59 +1965,56 @@ export function parseTagTaxonomyImport(
 
     const lower = canonical.toLowerCase();
     parsedTagsSet.add(lower);
+
+    if (rawLower.startsWith('project/') || axisHint === 'project') {
+      explicitlyMarkedProjectTags.add(lower);
+    }
+    if (rawLower.startsWith('research/') || KNOWN_RESEARCH_IDS.has(lower)) {
+      explicitlyMarkedResearchTags.add(lower);
+    }
+
+    const effectiveAxisId = prefixAxis || axisHint;
     let targetAxis: TaxonomyAxisDefinition | undefined;
 
-    if (lower.startsWith('type/')) targetAxis = axes.find(a => a.id === 'type');
-    else if (lower.startsWith('domain/')) targetAxis = axes.find(a => a.id === 'domain');
-    else if (lower.startsWith('project/') || lower.startsWith('research/')) targetAxis = axes.find(a => a.id === 'project');
-    else if (lower.startsWith('system/') || lower.startsWith('concept/')) targetAxis = axes.find(a => a.id === 'system');
-    else if (lower.startsWith('status/')) targetAxis = axes.find(a => a.id === 'status');
-    else if (lower.startsWith('priority/')) targetAxis = axes.find(a => a.id === 'priority');
-    else if (lower.startsWith('stage/')) targetAxis = axes.find(a => a.id === 'stage');
-    else if (lower.startsWith('knowledge/')) targetAxis = axes.find(a => a.id === 'knowledge');
-    else if (lower.startsWith('relation/')) targetAxis = axes.find(a => a.id === 'relation');
-    else if (!canonical.includes('/')) {
-      targetAxis = axes.find(a => a.id === 'root');
-    } else {
-      const prefix = canonical.split('/')[0].toLowerCase();
-      targetAxis = axes.find(a => a.id.toLowerCase() === prefix);
-      if (!targetAxis) {
-        targetAxis = {
-          id: prefix,
-          level: 'Custom',
-          label: `Custom — ${prefix.toUpperCase()}`,
-          question: `Категория ${prefix}?`,
-          prefix: `${prefix}/`,
-          tags: []
-        };
-        axes.push(targetAxis);
-      }
+    if (effectiveAxisId) {
+      targetAxis = axes.find(a => a.id === effectiveAxisId);
+    }
+    if (!targetAxis) {
+      // Check if already belongs to a default axis
+      targetAxis = DEFAULT_TAG_TAXONOMY.find(a => a.tags.some(t => t.toLowerCase() === lower))
+        ? axes.find(
+            a =>
+              a.id ===
+              DEFAULT_TAG_TAXONOMY.find(da => da.tags.some(t => t.toLowerCase() === lower))!.id
+          )
+        : axes.find(a => a.id === 'system') || axes.find(a => a.id === 'root');
     }
 
     if (targetAxis && !targetAxis.tags.some(t => t.toLowerCase() === lower)) {
       targetAxis.tags.push(canonical);
     }
 
-    // If this is a `project/<Name>` or `research/<Name>` tag, ensure a ProjectTagProfile exists
-    if (lower.startsWith('project/') || lower.startsWith('research/')) {
-      const isRes = lower.startsWith('research/');
-      const name = canonical.split('/').slice(1).join('/');
-      if (name) {
-        const defaultFolder = isRes ? `03_Knowledge/Research/${name}` : `${projectsRoot}/${name}`;
-        if (!profilesMap.has(lower)) {
-          profilesMap.set(lower, {
-            id: name,
-            projectTag: canonical,
-            targetFolder: tagRoutes[canonical] || defaultFolder,
-            associatedTags: [canonical],
-            aliases: Array.from(new Set([name, name.replace(/[-_]+/g, ' ')]))
-          });
-        }
-        if (!tagRoutes[canonical]) {
-          tagRoutes[canonical] = profilesMap.get(lower)!.targetFolder;
-        }
-        touchedProjects.add(lower);
+    // If this is a project or research tag, ensure a ProjectTagProfile exists
+    if (
+      explicitlyMarkedProjectTags.has(lower) ||
+      explicitlyMarkedResearchTags.has(lower) ||
+      profilesMap.has(lower)
+    ) {
+      const isRes = explicitlyMarkedResearchTags.has(lower) || KNOWN_RESEARCH_IDS.has(lower);
+      const defaultFolder = isRes ? `03_Knowledge/Research/${canonical}` : `${projectsRoot}/${canonical}`;
+      if (!profilesMap.has(lower)) {
+        profilesMap.set(lower, {
+          id: canonical,
+          projectTag: canonical,
+          targetFolder: tagRoutes[canonical] || defaultFolder,
+          associatedTags: [canonical],
+          aliases: Array.from(new Set([canonical, canonical.replace(/[-_]+/g, ' ')]))
+        });
       }
+      if (!tagRoutes[canonical]) {
+        tagRoutes[canonical] = profilesMap.get(lower)!.targetFolder;
+      }
+      touchedProjects.add(lower);
     }
 
     return canonical;
@@ -1998,14 +2043,16 @@ export function parseTagTaxonomyImport(
         if (Array.isArray(parsed.axes)) {
           for (const ax of parsed.axes) {
             if (Array.isArray(ax?.tags)) {
-              for (const t of ax.tags) registerTagInAxes(String(t));
+              for (const t of ax.tags) registerTagInAxes(String(t), ax.id ? String(ax.id) : undefined);
             }
           }
         }
         if (Array.isArray(parsed.projectProfiles)) {
           for (const prof of parsed.projectProfiles) {
             if (!prof || !prof.projectTag) continue;
-            const pTag = registerTagInAxes(String(prof.projectTag)) || String(prof.projectTag).replace(/^#+/, '');
+            const pTag =
+              registerTagInAxes(String(prof.projectTag), 'project') ||
+              normalizeToCanonicalTag(String(prof.projectTag));
             const assoc: string[] = [pTag];
             if (Array.isArray(prof.associatedTags)) {
               for (const at of prof.associatedTags) {
@@ -2013,7 +2060,7 @@ export function parseTagTaxonomyImport(
                 if (reg && !assoc.some(x => x.toLowerCase() === reg.toLowerCase())) assoc.push(reg);
               }
             }
-            const id = String(prof.id || pTag.split('/').pop() || pTag);
+            const id = String(prof.id || pTag);
             const targetFolder = String(prof.targetFolder || `${projectsRoot}/${id}`);
             profilesMap.set(pTag.toLowerCase(), {
               id,
@@ -2030,23 +2077,23 @@ export function parseTagTaxonomyImport(
         if (parsed.tagRoutes && typeof parsed.tagRoutes === 'object') {
           for (const [k, v] of Object.entries(parsed.tagRoutes)) {
             if (typeof k === 'string' && typeof v === 'string') {
-              const reg = registerTagInAxes(k) || k.replace(/^#+/, '');
-              tagRoutes[reg] = v.trim();
+              const reg = registerTagInAxes(k) || normalizeToCanonicalTag(k);
+              if (reg) tagRoutes[reg] = v.trim();
             }
           }
         }
-        // Also support simple project dictionary: { "Hermes": ["#project/Hermes", "#system/memory"] }
+        // Also support simple project dictionary: { "Hermes": ["#Hermes", "#memory"] }
         if (!parsed.axes && !parsed.projectProfiles) {
           for (const [key, val] of Object.entries(parsed)) {
             if (Array.isArray(val)) {
-              const pTag = key.includes('/') ? key.replace(/^#+/, '') : `project/${key.trim().replace(/\s+/g, '-')}`;
-              const regPTag = registerTagInAxes(pTag) || pTag;
+              const pTag = normalizeToCanonicalTag(key.trim().replace(/\s+/g, '-'));
+              const regPTag = registerTagInAxes(pTag, 'project') || pTag;
               const assoc: string[] = [regPTag];
               for (const item of val) {
                 const reg = registerTagInAxes(String(item));
                 if (reg && !assoc.some(x => x.toLowerCase() === reg.toLowerCase())) assoc.push(reg);
               }
-              const id = regPTag.split('/').pop() || key;
+              const id = regPTag || key;
               profilesMap.set(regPTag.toLowerCase(), {
                 id,
                 projectTag: regPTag,
@@ -2071,11 +2118,7 @@ export function parseTagTaxonomyImport(
     }
   }
 
-  // 2. Markdown / Text / YAML Parser (handles `project-hashtags-expanded.md`, prefix trees, code blocks, and project sections)
-  // Step 2a: Pre-expand prefix-tree blocks like:
-  // #type/
-  //     project
-  //     research
+  // 2. Markdown / Text / YAML Parser
   const lines = trimmed.split(/\r?\n/);
   const expandedLines: string[] = [];
   let activeTreePrefix: string | null = null;
@@ -2100,15 +2143,15 @@ export function parseTagTaxonomyImport(
 
   const normalizedMarkdown = expandedLines.join('\n');
 
-  // Step 2b: Parse explicit route lines like `#project/Hermes -> 01_Projects/Hermes` or `- project/Hermes: 01_Projects/Hermes`
+  // Step 2b: Parse explicit route lines like `#Hermes -> 01_Projects/Hermes` or `#project/Hermes -> 01_Projects/Hermes`
   for (const line of expandedLines) {
     const routeMatch = line.match(
-      /^\s*(?:[-*]\s*)?#?((?:type|domain|project|research|system|concept|status|priority|stage|knowledge|relation)\/[\p{L}\p{N}_/×²+-]+)\s*(?:->|=>|→)\s*([0-9A-Za-z\u0400-\u04FF_/-]+)\s*$/u
+      /^\s*(?:[-*]\s*)?#([\p{L}\p{N}_/×²+-]+)\s*(?:->|=>|→)\s*([0-9A-Za-z\u0400-\u04FF_/-]+)\s*$/u
     );
     if (routeMatch) {
-      const tag = registerTagInAxes(routeMatch[1]) || routeMatch[1];
+      const tag = registerTagInAxes(routeMatch[1]) || normalizeToCanonicalTag(routeMatch[1]);
       const folder = routeMatch[2].trim().replace(/^\/+|\/+$/g, '');
-      if (folder) {
+      if (tag && folder) {
         tagRoutes[tag] = folder;
         const prof = profilesMap.get(tag.toLowerCase());
         if (prof) prof.targetFolder = folder;
@@ -2117,7 +2160,7 @@ export function parseTagTaxonomyImport(
   }
 
   // Step 2c: Helper to extract all tags from a text block
-  const extractTagsFromBlock = (blockText: string): string[] => {
+  const extractTagsFromBlock = (blockText: string, axisHint?: string): string[] => {
     const found: string[] = [];
     const seen = new Set<string>();
 
@@ -2125,21 +2168,21 @@ export function parseTagTaxonomyImport(
     const hashMatches = blockText.match(/(?:^|[\s,([`])#([\p{L}\p{N}_/×²+-]+)/gu) || [];
     for (const m of hashMatches) {
       const raw = m.replace(/^[^#]*#+/, '').replace(/\/+$/, '');
-      const reg = registerTagInAxes(raw);
+      const reg = registerTagInAxes(raw, axisHint);
       if (reg && !seen.has(reg.toLowerCase())) {
         seen.add(reg.toLowerCase());
         found.push(reg);
       }
     }
 
-    // Also match un-hashed YAML/list tags with canonical prefixes (e.g. `- type/research` or `domain/AI/LLM`)
+    // Also match un-hashed legacy YAML/list tags with prefixes
     const prefixMatches =
       blockText.match(
         /(?:^|[\s,([`-])((?:type|domain|project|research|system|concept|status|priority|stage|knowledge|relation)\/[\p{L}\p{N}_/×²+-]+)/gu
       ) || [];
     for (const pm of prefixMatches) {
       const raw = pm.trim().replace(/^[-*,\s([`]+/, '').replace(/\/+$/, '');
-      const reg = registerTagInAxes(raw);
+      const reg = registerTagInAxes(raw, axisHint);
       if (reg && !seen.has(reg.toLowerCase())) {
         seen.add(reg.toLowerCase());
         found.push(reg);
@@ -2149,10 +2192,16 @@ export function parseTagTaxonomyImport(
     return found;
   };
 
-  // Extract all tags globally first
-  extractTagsFromBlock(normalizedMarkdown);
+  // Step 2d: Parse Markdown heading sections first so section axis hints (L0..L7) are applied
+  const headingSections = normalizedMarkdown.split(/(?=^#{1,4}\s+[^\n]+)/m);
+  for (const section of headingSections) {
+    const headerMatch = section.match(/^#{1,4}\s+([^\n]+)/);
+    const headingText = headerMatch ? headerMatch[1].trim() : undefined;
+    const axisHint = inferAxisIdFromHeading(headingText);
+    extractTagsFromBlock(section, axisHint);
+  }
 
-  // Step 2d: Associate tags with Project Profiles across logical blocks (fenced code blocks & heading sections)
+  // Associate tags with Project Profiles across logical blocks (fenced code blocks & heading sections)
   const associateBlockWithProject = (
     blockTags: string[],
     headingHint?: string,
@@ -2160,28 +2209,28 @@ export function parseTagTaxonomyImport(
     aliasesHint?: string[]
   ) => {
     if (blockTags.length === 0) return;
-    const projectTagsInBlock = blockTags.filter(t => t.toLowerCase().startsWith('project/'));
-    const researchTagsInBlock = blockTags.filter(t => t.toLowerCase().startsWith('research/'));
+    const projectTagsInBlock = blockTags.filter(
+      t => explicitlyMarkedProjectTags.has(t.toLowerCase()) || profilesMap.has(t.toLowerCase())
+    );
+    const researchTagsInBlock = blockTags.filter(t => explicitlyMarkedResearchTags.has(t.toLowerCase()));
 
     let targetPrimaryTag: string | null = null;
     if (projectTagsInBlock.length === 1) {
       targetPrimaryTag = projectTagsInBlock[0];
     } else if (projectTagsInBlock.length === 0 && researchTagsInBlock.length === 1 && blockTags.length > 1) {
       targetPrimaryTag = researchTagsInBlock[0];
-    } else if (projectTagsInBlock.length === 0 && headingHint) {
-      // Check if headingHint matches a known project name or looks like a specific project heading
+    } else if (headingHint) {
       const cleanHeading = headingHint
         .replace(/^[0-9.)\s#-]+/, '')
-        .replace(/\b(project|проект|система|system|направление|direction)\b[:\s-]*/gi, '')
+        .replace(/\b(project|\u043f\u0440\u043e\u0435\u043a\u0442|\u0441\u0438\u0441\u0442\u0435\u043c\u0430|system|\u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435|direction|\u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440)\b[:\s-]*/gi, '')
         .split(/[—–:(]/)[0]
         .trim();
       const genericHeadingRegex =
-        /^(?:l[0-7]|axis|type|domain|project|projects|research|system|status|priority|stage|knowledge|relation|ai|computing|society|economy|creative|personal|operations|итоговая|модель|отдельная|ось|примеров?|примеры|tags|hashtags|теги)/i;
+        /^(?:l[0-7]|axis|type|domain|project|projects|research|system|status|priority|stage|knowledge|relation|ai|computing|society|economy|creative|personal|operations|\u0438\u0442\u043e\u0433\u043e\u0432\u0430\u044f|\u043c\u043e\u0434\u0435\u043b\u044c|\u043e\u0442\u0434\u0435\u043b\u044c\u043d\u0430\u044f|\u043e\u0441\u044c|\u043f\u0440\u0438\u043c\u0435\u0440\u043e\u0432?|\u043f\u0440\u0438\u043c\u0435\u0440\u044b|tags|hashtags|\u0442\u0435\u0433\u0438|orthogonal|tag-to-directory)/i;
       if (cleanHeading && cleanHeading.length >= 2 && cleanHeading.length <= 35 && !genericHeadingRegex.test(cleanHeading)) {
         const slug = cleanHeading.replace(/\s+/g, '-');
-        const candidateKey = `project/${slug.toLowerCase()}`;
         const existingProf =
-          profilesMap.get(candidateKey) ||
+          profilesMap.get(slug.toLowerCase()) ||
           Array.from(profilesMap.values()).find(
             p =>
               p.id.toLowerCase() === cleanHeading.toLowerCase() ||
@@ -2189,6 +2238,9 @@ export function parseTagTaxonomyImport(
           );
         if (existingProf) {
           targetPrimaryTag = existingProf.projectTag;
+        } else if (folderHint) {
+          const reg = registerTagInAxes(slug, 'project') || slug;
+          targetPrimaryTag = reg;
         }
       }
     }
@@ -2197,14 +2249,13 @@ export function parseTagTaxonomyImport(
 
     const key = targetPrimaryTag.toLowerCase();
     const existing = profilesMap.get(key);
-    const id = targetPrimaryTag.split('/').slice(1).join('/') || targetPrimaryTag;
-    const isRes = key.startsWith('research/');
+    const id = existing?.id || targetPrimaryTag;
+    const isRes = explicitlyMarkedResearchTags.has(key) || KNOWN_RESEARCH_IDS.has(key);
     const defaultFolder = isRes ? `03_Knowledge/Research/${id}` : `${projectsRoot}/${id}`;
 
     const mergedAssoc = new Set<string>(existing ? existing.associatedTags : [targetPrimaryTag]);
     for (const bt of blockTags) {
-      // Do not attach other projects' `project/...` tags
-      if (bt.toLowerCase().startsWith('project/') && bt.toLowerCase() !== key) continue;
+      if (explicitlyMarkedProjectTags.has(bt.toLowerCase()) && bt.toLowerCase() !== key) continue;
       mergedAssoc.add(bt);
     }
 
@@ -2217,7 +2268,7 @@ export function parseTagTaxonomyImport(
 
     const finalFolder = folderHint || existing?.targetFolder || tagRoutes[targetPrimaryTag] || defaultFolder;
     profilesMap.set(key, {
-      id: existing?.id || id,
+      id,
       projectTag: existing?.projectTag || targetPrimaryTag,
       targetFolder: finalFolder,
       associatedTags: Array.from(mergedAssoc),
@@ -2228,7 +2279,7 @@ export function parseTagTaxonomyImport(
     touchedProjects.add(key);
   };
 
-  // 1) Inspect fenced code blocks (```...```) — in files like Request 1, each project's subsystem tags are in their own code block!
+  // 1) Inspect fenced code blocks (```...```)
   const codeBlockRegex = /(?:([^\n`]{2,80})\n+)?```[^\n]*\n([\s\S]*?)```/g;
   let cbMatch: RegExpExecArray | null;
   while ((cbMatch = codeBlockRegex.exec(normalizedMarkdown)) !== null) {
@@ -2239,13 +2290,15 @@ export function parseTagTaxonomyImport(
   }
 
   // 2) Inspect Markdown heading sections (`# ...`, `## ...`, `### ...`)
-  const headingSections = normalizedMarkdown.split(/(?=^#{1,4}\s+[^\n]+)/m);
   for (const section of headingSections) {
     const headerMatch = section.match(/^#{1,4}\s+([^\n]+)/);
     if (!headerMatch) continue;
     const headingText = headerMatch[1].trim();
-    const folderMatch = section.match(/(?:folder|directory|path|папка|директория)\s*:\s*`?([0-9A-Za-z\u0400-\u04FF_/-]+)`?/i);
-    const aliasesMatch = section.match(/(?:aliases|алиасы|ключевые слова|keywords)\s*:\s*([^\n]+)/i);
+    const axisHint = inferAxisIdFromHeading(headingText);
+    if (axisHint) continue; // Do not treat axis headings (L0..L7) as single project sections
+
+    const folderMatch = section.match(/(?:folder|directory|path|\u043f\u0430\u043f\u043a\u0430|\u0434\u0438\u0440\u0435\u043a\u0442\u043e\u0440\u0438\u044f)\s*:\s*`?([0-9A-Za-z\u0400-\u04FF_/-]+)`?/i);
+    const aliasesMatch = section.match(/(?:aliases|\u0430\u043b\u0438\u0430\u0441\u044b|\u043a\u043b\u044e\u0447\u0435\u0432\u044b\u0435 \u0441\u043b\u043e\u0432\u0430|keywords)\s*:\s*([^\n]+)/i);
     const aliasesList = aliasesMatch
       ? aliasesMatch[1]
           .split(/[,;]/)
@@ -2273,7 +2326,7 @@ export function parseTagTaxonomyImport(
 
 /**
  * Exports the current VaultTagTaxonomyConfig (`axes`, `projectProfiles`, `tagRoutes`) as a structured Markdown file
- * compatible with `project-hashtags-expanded.md` and lossless re-import.
+ * with 100% clean, slash-free hashtags (`#Hermes`, `#agent-orchestration`, `#World-1149`) and lossless re-import.
  */
 export function exportTagTaxonomyToMarkdown(config?: Partial<VaultTagTaxonomyConfig>): string {
   const axes = config?.axes || DEFAULT_TAG_TAXONOMY;
@@ -2283,7 +2336,7 @@ export function exportTagTaxonomyToMarkdown(config?: Partial<VaultTagTaxonomyCon
     '# Orthogonal Tag Taxonomy & Project Hashtags (L0–L7)',
     '',
     `> Updated: ${config?.updatedAt || new Date().toISOString()}`,
-    '> Import/Export compatible with Obsidian Local LLM Pipeline.',
+    '> Clean atomic hashtags (no slash prefixes) — compatible with Obsidian Local LLM Pipeline.',
     ''
   ];
 
@@ -2298,7 +2351,8 @@ export function exportTagTaxonomyToMarkdown(config?: Partial<VaultTagTaxonomyCon
     lines.push('');
     lines.push('```text');
     for (const t of axis.tags) {
-      lines.push(`#${t.replace(/^#+/, '')}`);
+      const clean = normalizeToCanonicalTag(t) || t.replace(/^#+/, '');
+      lines.push(`#${clean}`);
     }
     lines.push('```');
     lines.push('');
@@ -2317,9 +2371,11 @@ export function exportTagTaxonomyToMarkdown(config?: Partial<VaultTagTaxonomyCon
     }
     lines.push('');
     lines.push('```text');
-    const uniqueTags = Array.from(new Set([prof.projectTag, ...prof.associatedTags]));
+    const uniqueTags = Array.from(
+      new Set([prof.projectTag, ...prof.associatedTags].map(t => normalizeToCanonicalTag(t) || t.replace(/^#+/, '')))
+    );
     for (const t of uniqueTags) {
-      lines.push(`#${t.replace(/^#+/, '')}`);
+      lines.push(`#${t}`);
     }
     lines.push('```');
     lines.push('');
@@ -2332,7 +2388,8 @@ export function exportTagTaxonomyToMarkdown(config?: Partial<VaultTagTaxonomyCon
   lines.push('');
   lines.push('```text');
   for (const [tag, folder] of Object.entries(tagRoutes)) {
-    lines.push(`#${tag.replace(/^#+/, '')} -> ${folder}`);
+    const clean = normalizeToCanonicalTag(tag) || tag.replace(/^#+/, '');
+    lines.push(`#${clean} -> ${folder}`);
   }
   lines.push('```');
   lines.push('');
@@ -2342,8 +2399,8 @@ export function exportTagTaxonomyToMarkdown(config?: Partial<VaultTagTaxonomyCon
 
 /**
  * Extracts tags from note frontmatter, body, and filename.
- * Supports hierarchical tags (`type/research`, `domain/AI/LLM`, `priority/P1`)
- * and strips out non-word garbage codes (`#01G23`).
+ * Automatically normalizes any legacy slash-prefixed tags (`#system/semantic-ingestion` -> `semantic-ingestion`)
+ * into clean, atomic tags and strips out non-word garbage codes (`#01G23`).
  */
 export function extractTags(frontmatter: string, body: string, filename: string): string[] {
   const tagsSet = new Set<string>();
@@ -2390,7 +2447,7 @@ export function extractTags(frontmatter: string, body: string, filename: string)
     }
   }
 
-  // 2. Inline #tags in body and filename (supports hierarchical #type/research, #priority/P1, etc.)
+  // 2. Inline #tags in body and filename (automatically strips legacy slash prefixes)
   const bodyWithoutCode = (body || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ');
   const textToScan = `${filename}\n${bodyWithoutCode}`;
   const inlineMatches = textToScan.match(/(?:^|\s)#([\p{L}\p{N}_/×²+-]+)/gu) || [];

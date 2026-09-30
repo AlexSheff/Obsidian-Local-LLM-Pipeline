@@ -71,7 +71,7 @@ export function checkGhostNote(parsedBody: string): { isGhost: boolean; reason: 
   // Strip frontmatter if full file content was passed
   let cleaned = parsedBody.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '');
 
-  // Strip callouts and blockquotes (e.g. > **Связанные темы:** ..., > [!info] ...)
+  // Strip callouts and blockquotes (e.g. > **Related Topics:** ..., > [!info] ...)
   cleaned = cleaned
     .replace(/^>.*?$/gm, '')
     .replace(/\[\[.*?\]\]/g, '') // Wiki links

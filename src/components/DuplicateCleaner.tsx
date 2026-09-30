@@ -105,15 +105,11 @@ export default function DuplicateCleaner({ onNotify }: DuplicateCleanerProps) {
   };
 
   const handleCleanAllExact = async () => {
-    if (!confirm(`Clean all ${stats.exactDuplicatesCount} exact duplicate notes? Any unique tags will be safely merged into original notes, and backups will be stored in 99_System/_duplicates_trash.`)) {
-      return;
-    }
-
     setActionLoading(true);
     try {
       const res = await axios.post('/api/duplicates/clean', { allExact: true });
       setStatusMessage({
-        text: res.data.message || `Cleaned ${res.data.removedCount} exact duplicates.`,
+        text: res.data.message || `Cleaned ${res.data.removedCount} exact duplicates (backup saved in 99_System/_duplicates_trash — click "Restore Last Clean" to undo).`,
         type: 'success'
       });
       await fetchDuplicates();
@@ -177,10 +173,6 @@ export default function DuplicateCleaner({ onNotify }: DuplicateCleanerProps) {
   };
 
   const handleRestore = async () => {
-    if (!confirm('Restore notes from the most recent cleanup backup in 99_System/_duplicates_trash?')) {
-      return;
-    }
-
     setActionLoading(true);
     try {
       const res = await axios.post('/api/duplicates/restore');

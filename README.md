@@ -1,136 +1,122 @@
-# Obsidian Local LLM Pipeline (v5.1)
+# Obsidian Local LLM Pipeline (v4.0 — Full-Meaning Semantic Clustering & Clean `#Tag` Engine)
 
-An automated, **Vault-Agnostic**, **100% offline** intelligence pipeline and knowledge workspace for **Obsidian** powered by a local dual-model engine (`Jev Decision Router` + `Primary Generative LLM`) via `llama.cpp`.
+**100% Offline, Privacy-First Knowledge Base Organizer, Full-Meaning Semantic Clustering Engine, Clean `#Tag` Project Router, and Dual-Model AI Pipeline (`Jev 1234` + `Primary LLM 8080`) for Obsidian Vaults.**
 
-Designed to run on **any PC and any Obsidian Vault without hardcoded projects or paths**, with strict resource bounds (optimized for 16 GB RAM / 4–6 CPU threads). It dynamically discovers your vault's hierarchy on disk, classifies and routes documents using two-tier logprob + LLM routing, organizes tags using a bounded **Orthogonal Multi-Level Tag Taxonomy (L0–L7)** with **Custom Tag List Import/Export (`.md`, `.json`, `.yaml`)**, automatically detects project affiliation from tags and distributes `.md` files into target directories, prunes empty directories automatically after moves, and provides a **Local AI Knowledge Chat & File Agent** to search, plan, create, edit, and move notes directly from the workspace.
-
----
-
-## Key Capabilities in v5.1
-
-### 1. 100% Dynamic, Vault-Agnostic Architecture (Zero Hardcoding)
-- **On-the-Fly Structure Discovery (`discoverVaultStructure` & `loadProjectsRegistry`)**: Connects to any local Obsidian Vault directory and automatically discovers existing category folders, project roots (`01_Projects/*`), and active tags directly from disk.
-- **Automatic Bilingual Phonetic Aliases**: Dynamically generates Latin/Cyrillic transliterations and stem aliases for every project folder discovered in your vault.
-- **Semantic Guardrails (`validateAndSanitizeRoute` & `preserveMeaningfulTitle`)**: Prevents models from misrouting general knowledge notes, meeting agendas, or ideas into unrelated project folders, and preserves series numbers and explicit project codes in note titles.
-- **Automatic Empty Folder Pruning (`pruneEmptyDirectories` & `pruneEmptyParentDirs`)**: Every file move, rename, triage resolution, duplicate cleanup, or batch refinement automatically cleans up empty parent directories (including folders containing only OS metadata junk such as `.DS_Store` or `Thumbs.db`).
-
-### 2. Orthogonal Multi-Level Tag Taxonomy (`L0–L7`) & Instant Tag Manager
-Instead of turning every word in a note into a flat tag, the pipeline enforces a high-signal **Orthogonal Faceted Taxonomy** (bounded to max depth 3 and 5–9 tags per note) where each tag answers a distinct question:
-
-| Level / Axis | Prefix | Core Question | Canonical Examples |
-| :--- | :--- | :--- | :--- |
-| **L0 — Infrastructure** | *(root)* | Infrastructure, methodology, or standard? | `#system`, `#meta`, `#knowledge`, `#method`, `#protocol`, `#architecture`, `#reference` |
-| **L1 — Object Type** | `type/` | What kind of object is this? | `#type/project`, `#type/research`, `#type/whitepaper`, `#type/scenario`, `#type/idea`, `#type/task`, `#type/meeting`, `#type/concept`, `#type/protocol`, `#type/reference`, `#type/tool` |
-| **L2 — Domain** | `domain/` | Which subject domain does it belong to? | `#domain/AI`, `#domain/AI/agents`, `#domain/AI/LLM`, `#domain/semantics`, `#domain/hypergraph`, `#domain/knowledge-management`, `#domain/software`, `#domain/philosophy`, `#domain/film`, `#domain/transmedia`, `#domain/business`, `#domain/economy` |
-| **L3 — Project / Research** | `project/`, `research/` | Which project or research stream? | Dynamically populated from Vault (`#project/<FolderName>`) + `#project/Hermes`, `#project/Obsidian-LLM-Pipeline`, `#project/Neuromicon`, `#research/semantic-hypergraph`, `#research/JeV-response` |
-| **L4 — Subsystem / Concept** | `system/`, `concept/` | What function or concept does it implement? | `#system/agent-orchestration`, `#system/routing`, `#system/classification`, `#system/tagging`, `#concept/World-1149`, `#concept/Protocol-Contact` |
-| **L5 — Status** | `status/` | What state is the work in? | `#status/idea`, `#status/research`, `#status/design`, `#status/prototype`, `#status/active`, `#status/testing`, `#status/paused`, `#status/completed`, `#status/archived` |
-| **L6 — Priority** | `priority/` | How critical is it? | `#priority/P0` (Critical), `#priority/P1` (Current), `#priority/P2` (Next), `#priority/P3` (Backlog) |
-| **L7 — Work Stage** | `stage/` | Where in the lifecycle is this material? | `#stage/question`, `#stage/discovery`, `#stage/research`, `#stage/model`, `#stage/design`, `#stage/implementation`, `#stage/validation`, `#stage/deployment`, `#stage/measurement` |
-| **Epistemic Axis** | `knowledge/` | What is the epistemic nature of this knowledge? | `#knowledge/fact`, `#knowledge/observation`, `#knowledge/hypothesis`, `#knowledge/model`, `#knowledge/theory`, `#knowledge/assumption`, `#knowledge/decision`, `#knowledge/evidence`, `#knowledge/specification` |
-| **Relation Axis** | `relation/` | How does it relate to other entities? | `#relation/dependency`, `#relation/component`, `#relation/alternative`, `#relation/extension`, `#relation/integration`, `#relation/conflict` |
-
-- **Strict Garbage-Tag Filtering (`isValidSemanticTag`)**: Automatically strips non-word alphanumeric codes (`#01G23`, `#w3x06`, `#a3ps9`), numeric IDs, and folder prefixes (`#01_Projects`) across YAML frontmatter parsing, extraction, and saving.
-- **Custom Tag List Import & Export (`.md`, `.json`, `.yaml`)**:
-  - Upload or paste your own multi-level tag specification (including Markdown files like `project-hashtags-expanded.md`, JSON, or YAML) in **2. Unified Pipeline & Audits → Tag Import / Export & Routing** with **Merge** or **Replace** modes, and export your active taxonomy and project profiles to `.md` or `.json` in 1 click.
-  - Automatically parses `L0–L7` axes (`#system`, `#type/*`, `#domain/*`, `#project/*`, `#research/*`, `#concept/*`, `#status/*`, `#priority/*`, `#stage/*`, `#knowledge/*`, `#relation/*`) as well as **Project Tag Clusters** (mapping `#project/<Name>` and `#research/<Topic>` to their associated `#system/*`, `#concept/*`, and `#domain/*` tags, bilingual aliases, and target folders).
-- **Automated Project Detection & Tag-Based Directory Distribution (`inferProjectFromNoteAndTaxonomy` + `resolveDirectoryFromTags`)**:
-  - Scans `.md` files across the Vault, determines which project or research direction each note belongs to (by scoring explicit `#project/*` tags, unique project-associated `#concept/*` & `#system/*` tags such as `#concept/World-1149` $\rightarrow$ `Neuromicon` or `#system/agent-orchestration` $\rightarrow$ `Hermes`, and bilingual aliases).
-  - Updates the note's YAML frontmatter (`tags` + `project: "[[ProjectName]]"`) and automatically moves the `.md` file into the corresponding directory according to tag priority:
-    1. `#status/archived` (without `#status/active`) $\rightarrow$ `06_Archive`
-    2. `#project/<Name>` $\rightarrow$ `01_Projects/<Name>` (or custom folder configured in the project profile)
-    3. `#research/<Topic>` $\rightarrow$ `03_Knowledge/Research/<Topic>`
-    4. `#type/idea` $\rightarrow$ `05_Ideas`, `#type/meeting` / `#type/event` $\rightarrow$ `04_Journal`, `#type/scenario` $\rightarrow$ `03_Knowledge/Scripts`, `#type/research` / `#type/whitepaper` $\rightarrow$ `03_Knowledge/Research`
-    5. Domain & subsystem tags (`#domain/AI/*`, `#system/*` $\rightarrow$ `03_Knowledge/Technical`, `#domain/business` $\rightarrow$ `02_Areas/Business`, etc.)
-  - Includes **Preview Classification & Routing (Dry Run)**, **1-Click Snapshot Backup** (`99_System/snapshots/`), and **Automatic Empty Folder Pruning**.
-- **1-Click Interactive UI Controls**:
-  - **Quick Remove (`×`)**: Click `×` on any tag in the note editor to immediately remove it from the file.
-  - **Interactive L0–L7 Taxonomy Picker**: Toggle tags across any orthogonal axis in 1 click or add custom tags to your vault's taxonomy (`99_System/tag_taxonomy.json`).
-  - **1-Click Redefine (`Redefine Tags L0–L7`)**: Replaces noisy legacy tags on a single note—or across the entire Vault (`Normalize All Tags L0–L7`)—with a clean orthogonal tag set backed by automatic undo snapshots.
-
-### 3. Local AI Knowledge Chat & File Agent (`Jev + LLM Tandem`)
-- **Full-Vault Semantic Search (RAG)**: Finds relevant notes across your vault using bilingual stem matching and injects grounded context into the local LLM.
-- **Natural-Language File Management**: Ask the local chat assistant to **find notes**, **draft project roadmaps**, **create new Markdown notes** in target PARA folders, **append/edit sections** in the currently open note, or **move files** between folders—all with automatic snapshot backups.
-- **Live Tandem Verification (`Verify Jev + LLM`)**: Tests both the Jev Decision Router (Port 1234) and Primary LLM (Port 8080) in 1 click and gracefully falls back when either server is offline.
-
-### 4. Smart Ambiguity Triage with AI Rethink & Auto-Resolve
-- **Distinct Multi-Candidate Proposals**: Ambiguous notes (`confidence < threshold`) are queued with 3 distinct candidate folders.
-- **AI Rethink on "No" (`rethinkTriageAlternativeForNote`)**: Clicking **"No, Propose Alternative"** instructs the engine to exclude rejected folders, re-evaluate the note's content against remaining vault directories via Jev + semantic rules, and propose a smart alternative.
-- **1-Click Auto-Resolve (`Auto-Resolve All`)**: Automatically resolves single items or the entire triage queue into the best-matching vault folders and prunes empty directories.
-
-### 5. Dynamic Semantic Hypergraph (DSH) & Calibration Gate
-- **Three Logprob Primitives (`noul`, `score`, `choice`)**: Computes 3-uniform semantic hyperedges (`99_System/hypergraph/edges.jsonl`) and Oracle state predictions (`ticks.jsonl`) using typed logprob evaluations.
-- **Structured LLM Generation & Quarantine (`C1` & `C8`)**: Enforces JSON schema validation with safe quarantine to `00_Inbox/Review/` on malformed outputs and HTTP 400 context-overflow automatic retry with compact prompts.
-- **Security & Crash Resilience (`R1`–`R8`)**: Loopback host binding (`127.0.0.1`), strict vault boundary checks (`isPathInsideVault`), global Express and process exception handlers, and continuous `stdout`/`stderr` pipe draining for `llama-server` child processes.
+Built for knowledge workers, researchers, and creators who want their Obsidian Vault organized automatically by **full document meaning** and **clean atomic `#tags`** without sending a single byte of data to the cloud.
 
 ---
 
-## Unified 3-Tab Workspace
+## Key Capabilities
 
-1. **1. Vault Workspace & AI Chat**: Browse and filter documents by folder, language, and tag; edit notes with the interactive **L0–L7 Orthogonal Tag Picker**; and collaborate with the **Local AI Chat & Vault Agent**.
-2. **2. Unified Pipeline & Audits**: Configure your Vault path, initialize PARA directories, run the **Full Auto-Pipeline (Clean + Sort + Prune Empty)**, manage **Tag Import / Export & Project Routing (`TagTaxonomyWorkspace`)**, resolve **Ambiguity Triage**, audit folders with **Directory Revisor**, clean duplicates, and explore the **Semantic Hypergraph**.
-3. **3. Dual-Model Engine (Jev + LLM)**: Monitor live `llama-server` RAM and context telemetry on ports `1234` and `8080`, switch 16 GB RAM-safe profiles, and generate `.bat` launcher scripts.
+### 1. Full-Meaning Semantic Knowledge Clustering (`2. Semantic Clusters & #Tags`)
+- **Beyond Filename & Title Matching**: Groups documents by **complete semantic meaning** across the entire note body using **TF-IDF document vectors**, **bilingual RU/EN morphological stemming**, **cross-lingual concept anchors**, and **project/domain signatures**.
+- **Cross-Language Meaning Discovery**: Connects Russian and English notes about the same subject even when their titles have zero words in common (e.g., *"Заметки со вторничного созвона по архитектуре"* and *"Hermes Multi-Agent Memory and Free API Routing"*).
+- **Discovered Semantic Bridges**: Automatically surfaces hidden conceptual links between documents across different folders with similarity scores and shared concepts.
+- **1-Click Cluster `#Tag` Application & Folder Routing**: Apply a cluster's curated `#tags` (plus your own custom `#tags`) to all member documents and route misplaced files into their target project or knowledge folder in one click, backed by instant snapshot Undo.
+
+### 2. 100% Clean Atomic `#Tag` System (Zero `/` Slashes)
+- **Human-Friendly Atomic `#Tags`**: All tags across the system, YAML frontmatter, project profiles, and LLM prompts use clean, readable atomic format — `#Hermes`, `#Neuromicon`, `#World-1149`, `#UUCPFF`, `#AI`, `#agents`, `#LLM`, `#research`, `#active` — never cluttered `#system/...` or `#type/...` slash hierarchies.
+- **Automatic Legacy Slash Cleanup**: Any legacy prefixed tag (such as `#project/Hermes`, `#type/spec`, or `#domain/ai`) is automatically stripped to its canonical atomic `#tag` (`#Hermes`, `#spec`, `#AI`).
+- **Import Your Own `#Tags` from File**: Upload any `.md`, `.txt`, or `.json` file (such as `project-hashtags-expanded.md`) or import directly from your connected Obsidian Vault.
+- **Project `#Tag` Profiles & Directory Routing**: Assign clean `#tags` to projects (`Hermes`, `Neuromicon`, `UUCPFF`, or any custom project) so matching notes automatically receive the project `#tag` and route to `01_Projects/<ProjectName>`.
+
+### 3. Uncluttered, User-Friendly 4-Workspace Interface
+Designed around progressive disclosure, clean typographic hierarchy, and zero visual clutter:
+1. **`1. Vault & Notes`**: Search, filter by `#tag` or language, edit Markdown & YAML frontmatter, curate clean `#tags` in 1 click, and collaborate with the **Local Vault AI Assistant** (which can read, summarize, retag, rename, and move notes on command).
+2. **`2. Semantic Clusters & #Tags`**:
+   - **Semantic Clusters**: Inspect full-meaning document clusters, open any member note directly in the editor, add custom `#tags` to an entire cluster, and organize files in 1 click.
+   - **Project `#Tags`**: Manage project tag profiles, preview file routing (`Dry-Run Preview`), and apply project routing across the vault.
+   - **Import & `#Tag` Catalog**: Import/export `.md` and `.json` tag files and manage the L0–L7 clean `#tag` catalog (`Status`, `Type`, `Domain`, `Project`, `Tech`, `Method`, `Scale`, `Audience`).
+3. **`3. Pipeline & Audits`**:
+   - **1-Click Full Auto-Pipeline**: Runs project discovery → ghost cleanup → exact deduplication → clean `#tag` classification & folder routing → empty folder pruning → Dual-Model (`Jev + LLM`) enrichment.
+   - **Audit Tools**: Ambiguity Triage Queue, Project & Directory Audit (`DirectoryRevisor`), 3-Layer Duplicate Cleaner, and Dynamic Semantic Hypergraph (DSH).
+4. **`4. Local LLM Engine`**: Download, configure, and monitor local `.gguf` models (`llama-server` on ports `1234` and `8080`) with hardware-aware presets (`Balanced 16GB RAM`, `Solo 7B`, `Custom`).
 
 ---
 
-## Vault Architecture (PARA + Orthogonal Taxonomy + Hypergraph)
+## Quick Start
 
+### Prerequisites
+- **Node.js** `v18+` (recommended `v20+`)
+- *(Optional)* Local `llama.cpp` (`llama-server`) binary and `.gguf` models in `./llm/models` for local neural inference. The deterministic semantic clustering, clean `#tag` engine, and project router work immediately even when local LLM servers are offline.
+
+### Installation & Launch
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Start the application (runs on http://localhost:3000)
+npm run dev
+```
+
+### Try Immediately with the 1-Click Sample Vault
+Don't want to connect your personal Obsidian Vault right away?
+1. Open `http://localhost:3000`.
+2. Click **`1-Click Sample Vault`** in the onboarding banner.
+3. Switch to **`2. Semantic Clusters & #Tags`** to see how Russian and English notes with completely different titles are clustered by full meaning, or test importing your own `.md` tag file in **`3. Import & #Tag Catalog`**.
+
+---
+
+## Importing Your Custom `#Tags` (`project-hashtags-expanded.md`)
+
+You can import your own Markdown file with clean hashtags in **`2. Semantic Clusters & #Tags` → `3. Import & #Tag Catalog`**:
+
+```markdown
+# My Clean Project & Knowledge Tags
+
+### Hermes
+Folder: 01_Projects/Hermes
+Aliases: Hermes, Гермес, Hermes Agent
 ```text
-<Your_Obsidian_Vault>/
-├── 00_Inbox/                  <- Drop incoming files here for automated routing
-│   ├── Processed/             <- Fallback processed notes
-│   └── Review/                <- Quarantined notes with review_reason in frontmatter
-├── 00_MOC/                    <- Maps of Content
-├── 01_Projects/               <- Active projects (discovered dynamically from disk)
-├── 02_Areas/                  <- Long-term areas of responsibility
-├── 03_Knowledge/              <- Essays, Dialogues, Technical, Poems, Scripts
-├── 04_Journal/                <- Daily logs & digests
-├── 05_Ideas/                  <- Raw brainstorming & innovations
-├── 06_Archive/                <- Completed or archived notes
-└── 99_System/
-    ├── projects.yaml          <- Auto-bootstrapped / customizable project registry
-    ├── tag_taxonomy.json      <- Customizable L0–L7 Orthogonal Tag Taxonomy
-    ├── hypergraph/
-    │   ├── tokens.jsonl       <- Canonical token registry
-    │   ├── edges.jsonl        <- 3-uniform hyperedges with EMA weights
-    │   ├── note_tokens.jsonl  <- Inverted note-to-token index
-    │   ├── ticks.jsonl        <- Oracle versioned prediction ticks
-    │   ├── cost_log.jsonl     <- Decision primitive execution logs
-    │   └── _Report.md         <- Comprehensive topology and latency report
-    ├── index/
-    │   ├── thresholds.json    <- Empirical calibration gate (tau, accuracy, coverage)
-    │   └── feedback.jsonl     <- User confirmation and triage logs
-    └── snapshots/             <- Safe backups for 1-click rollback
+#Hermes
+#agent-orchestration
+#multi-agent
+#memory
+#routing
+#local-LLM
+#free-API
+```
+
+### Neuromicon
+Folder: 01_Projects/Neuromicon
+Aliases: Neuromicon, Нейромикон, World-1149, Мир 1149
+```text
+#Neuromicon
+#World-1149
+#Protocol-Contact
+#24+1
+#Defragmentation
+#E=M×C²
+#transmedia
+#ARG
+```
 ```
 
 ---
 
-## Hardware Configuration (16 GB RAM Safe Profile)
+## REST API Overview
 
-| Model File | Role | Port | Context (`-c`) | Threads (`-t`) | Est. RAM |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `Hermes-3-Llama-3.2-3B.Q4_K_M.gguf` | Primary Generative LLM & Chat Agent | `8080` | `2048` – `4096` | `4` | ~2.5 GB |
-| `Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf` | Decision Router & DSH Logprob Engine | `1234` | `2048` | `4` | ~1.6 GB |
-| `Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf` | Solo 7B Mode (Optional) | `8080` | `4096` | `4` | ~4.8 GB |
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/vault/clusters` | `GET` | Analyzes full document meaning across the vault and returns semantic clusters & cross-note bridges. |
+| `/api/vault/clusters/apply` | `POST` | Applies clean cluster `#tags` (plus optional `extraTags`) and routes cluster notes to target folders with snapshot backup. |
+| `/api/tags/taxonomy` | `GET / POST` | Retrieves or updates the clean `#tag` catalog, project profiles, and routing rules. |
+| `/api/tags/taxonomy/import` | `POST` | Imports clean `#tags` and project profiles from Markdown, plain text, JSON, or a vault file. |
+| `/api/tags/taxonomy/export` | `GET` | Exports the active clean `#tag` taxonomy as `.md` or `.json`. |
+| `/api/vault/tags/classify-and-route` | `POST` | Batch-curates clean `#tags` and routes vault notes to project/PARA folders (`dryRun` supported). |
+| `/api/snapshots/rollback` | `POST` | Rolls back any cluster or routing batch operation using its `snapshotId`. |
 
 ---
 
-## CLI & Verification Commands
+## Verification & Testing
 
-| Command | Description |
-| :--- | :--- |
-| `npm run dev` | Start full-stack Express + Vite development server on `http://127.0.0.1:3000`. |
-| `npm run build` | Bundle frontend with Vite and compile Node.js server (`dist/server.cjs`). |
-| `npm start` | Run compiled production server on `http://127.0.0.1:3000`. |
-| `npm run lint` | Run TypeScript typecheck (`tsc --noEmit`). |
-| `npm test` | Run the complete Vitest suite (**106 tests passing across 13 test suites**). |
-| `npm run calibrate` | Evaluate empirical routing accuracy on vault notes and write `99_System/index/thresholds.json`. |
-| `npm run hypergraph:bootstrap -- --vault <path>` | Full vault pass: token extraction, DNA logic, and hypergraph generation. |
-| `npm run hypergraph:report -- --vault <path>` | Generate hypergraph analytics report in `99_System/hypergraph/_Report.md`. |
-| `npm run hypergraph:gc -- --vault <path>` | Prune zero-evidence edges and orphan tokens with snapshot backup. |
+Run the automated test suite and TypeScript build check:
+```bash
+npx vitest run
+npm run build
+```
 
 ---
 
 ## License
-
-MIT License &copy; Alex Tokarev (Good Projects corp).
+Apache-2.0

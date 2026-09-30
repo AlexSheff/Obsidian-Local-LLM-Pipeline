@@ -97,7 +97,7 @@ export const HypergraphWorkspace: React.FC<{ vaultPath: string; onNotify?: () =>
       await fetchData();
       if (onNotify) onNotify();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Review failed');
+      setActionMsg(err.response?.data?.error || 'Review failed');
     }
   };
 

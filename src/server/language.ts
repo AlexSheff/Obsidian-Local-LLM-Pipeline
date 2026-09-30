@@ -40,13 +40,13 @@ const COMMON_ENGLISH_WORDS = new Set([
 ]);
 
 const COMMON_RUSSIAN_WORDS = new Set([
-  'и', 'в', 'не', 'на', 'я', 'что', 'тот', 'быть', 'с', 'он',
-  'а', 'по', 'это', 'она', 'этот', 'к', 'но', 'они', 'мы', 'как',
-  'из', 'у', 'который', 'то', 'за', 'свой', 'что', 'еще', 'ещё', 'от',
-  'о', 'для', 'же', 'только', 'все', 'всё', 'его', 'до', 'вас', 'их',
-  'если', 'уже', 'или', 'ни', 'бы', 'такой', 'день', 'год', 'когда', 'со',
-  'проект', 'заметка', 'идея', 'система', 'сценарий', 'сюжет', 'работа', 'данные',
-  'план', 'анализ', 'описание', 'развитие', 'концепция', 'цель', 'задача'
+  '\u0438', '\u0432', '\u043d\u0435', '\u043d\u0430', '\u044f', '\u0447\u0442\u043e', '\u0442\u043e\u0442', '\u0431\u044b\u0442\u044c', '\u0441', '\u043e\u043d',
+  '\u0430', '\u043f\u043e', '\u044d\u0442\u043e', '\u043e\u043d\u0430', '\u044d\u0442\u043e\u0442', '\u043a', '\u043d\u043e', '\u043e\u043d\u0438', '\u043c\u044b', '\u043a\u0430\u043a',
+  '\u0438\u0437', '\u0443', '\u043a\u043e\u0442\u043e\u0440\u044b\u0439', '\u0442\u043e', '\u0437\u0430', '\u0441\u0432\u043e\u0439', '\u0447\u0442\u043e', '\u0435\u0449\u0435', '\u0435\u0449\u0451', '\u043e\u0442',
+  '\u043e', '\u0434\u043b\u044f', '\u0436\u0435', '\u0442\u043e\u043b\u044c\u043a\u043e', '\u0432\u0441\u0435', '\u0432\u0441\u0451', '\u0435\u0433\u043e', '\u0434\u043e', '\u0432\u0430\u0441', '\u0438\u0445',
+  '\u0435\u0441\u043b\u0438', '\u0443\u0436\u0435', '\u0438\u043b\u0438', '\u043d\u0438', '\u0431\u044b', '\u0442\u0430\u043a\u043e\u0439', '\u0434\u0435\u043d\u044c', '\u0433\u043e\u0434', '\u043a\u043e\u0433\u0434\u0430', '\u0441\u043e',
+  '\u043f\u0440\u043e\u0435\u043a\u0442', '\u0437\u0430\u043c\u0435\u0442\u043a\u0430', '\u0438\u0434\u0435\u044f', '\u0441\u0438\u0441\u0442\u0435\u043c\u0430', '\u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439', '\u0441\u044e\u0436\u0435\u0442', '\u0440\u0430\u0431\u043e\u0442\u0430', '\u0434\u0430\u043d\u043d\u044b\u0435',
+  '\u043f\u043b\u0430\u043d', '\u0430\u043d\u0430\u043b\u0438\u0437', '\u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435', '\u0440\u0430\u0437\u0432\u0438\u0442\u0438\u0435', '\u043a\u043e\u043d\u0446\u0435\u043f\u0446\u0438\u044f', '\u0446\u0435\u043b\u044c', '\u0437\u0430\u0434\u0430\u0447\u0430'
 ]);
 
 /**
@@ -180,13 +180,13 @@ export function extractRussianTitleFallback(noteContent: string, originalFilenam
   }
 
   // Look for first Russian sentence or phrase in text
-  const russianSentence = noteContent.match(/(?:^|\n)\s*([А-ЯЁ][А-Яа-яЁё\s,–—]{3,60})/);
+  const russianSentence = noteContent.match(/(?:^|\n)\s*([\u0410-\u042f\u0401][\u0410-\u042f\u0430-\u044f\u0401\u0451\s,–—]{3,60})/);
   if (russianSentence && russianSentence[1]) {
     const clean = russianSentence[1].trim();
     if (clean.length >= 3) return clean;
   }
 
-  return 'Заметка';
+  return '\u0417\u0430\u043c\u0435\u0442\u043a\u0430';
 }
 
 /**
@@ -232,7 +232,7 @@ export function enforceTitleLanguage(
   if (lang.primary === 'ru' && !titleHasCyrillic) {
     // If the original filename has Russian or content has a Russian heading, use that
     const russianFallback = extractRussianTitleFallback(docContent, originalFilename);
-    if (russianFallback && russianFallback !== 'Заметка') {
+    if (russianFallback && russianFallback !== '\u0417\u0430\u043c\u0435\u0442\u043a\u0430') {
       return russianFallback;
     }
     // If originalFilename itself has Russian, keep cleaned original

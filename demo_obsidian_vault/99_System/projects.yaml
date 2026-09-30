@@ -1,0 +1,36 @@
+projects:
+  - id: hermes
+    folder: 01_Projects/Hermes
+    aliases:
+      - Hermes
+      - хермес
+    coreDocTypes: &a1
+      - Project Spec
+      - Protocol
+      - Roadmap
+      - Business Plan
+      - Implementation
+      - Architecture
+      - Launch Plan
+      - Pilot
+      - Technical Spec
+  - id: neuromicon
+    folder: 01_Projects/Neuromicon
+    aliases:
+      - Neuromicon
+      - нейромикон
+    coreDocTypes: *a1
+  - id: obsidian-llm-pipeline
+    folder: 01_Projects/Obsidian-LLM-Pipeline
+    aliases:
+      - Obsidian-LLM-Pipeline
+      - Obsidian LLM Pipeline
+      - ObsidianLLMPipeline
+      - обсидиан ллм пипелине
+    coreDocTypes: *a1
+  - id: uucpff
+    folder: 01_Projects/UUCPFF
+    aliases:
+      - UUCPFF
+      - уукпфф
+    coreDocTypes: *a1

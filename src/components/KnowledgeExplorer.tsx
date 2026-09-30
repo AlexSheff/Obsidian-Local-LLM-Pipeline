@@ -11,9 +11,11 @@ import {
   X,
   Loader2,
   FilePlus,
-  Sparkles
+  Sparkles,
+  Tag
 } from 'lucide-react';
 import { KnowledgeChatPanel } from './KnowledgeChatPanel';
+import { TagTaxonomyWorkspace } from './TagTaxonomyWorkspace';
 
 export interface NoteSummary {
   id: string;
@@ -48,10 +50,19 @@ export interface NoteDetail {
 
 interface KnowledgeExplorerProps {
   vaultPath: string;
+  externalSelectedNotePath?: string | null;
+  externalSelectedTag?: string | null;
+  onOpenClustersTab?: () => void;
   onNotify: () => void;
 }
 
-export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath, onNotify }) => {
+export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({
+  vaultPath,
+  externalSelectedNotePath,
+  externalSelectedTag,
+  onOpenClustersTab,
+  onNotify
+}) => {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
@@ -98,7 +109,8 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
     }>
   >([]);
   const [activeAxisId, setActiveAxisId] = useState<string>('type');
-  const [showTaxonomyPicker, setShowTaxonomyPicker] = useState<boolean>(true);
+  const [showTaxonomyPicker, setShowTaxonomyPicker] = useState<boolean>(false);
+  const [showTagManagerModal, setShowTagManagerModal] = useState<boolean>(false);
   const [customAxisTagInput, setCustomAxisTagInput] = useState<string>('');
   const [mutatingTag, setMutatingTag] = useState<boolean>(false);
 
@@ -107,6 +119,19 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
     loadFolders();
     loadTaxonomy();
   }, [selectedFolder, selectedTag]);
+
+  useEffect(() => {
+    if (externalSelectedTag !== undefined && externalSelectedTag !== null) {
+      setSelectedFolder('all');
+      setSelectedTag(externalSelectedTag);
+    }
+  }, [externalSelectedTag]);
+
+  useEffect(() => {
+    if (externalSelectedNotePath) {
+      handleSelectNote(externalSelectedNotePath);
+    }
+  }, [externalSelectedNotePath]);
 
   const loadTaxonomy = async () => {
     try {
@@ -333,7 +358,7 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
       setActionSuccess(res.data.message || 'Note classified and sorted via Jev + LLM.');
       onNotify();
       await loadFolders();
-      await loadNotes();
+      await loadNotes(res.data?.newRelativePath || noteDetail.relativePath);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to classify note');
     } finally {
@@ -701,7 +726,7 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
                   <div className="space-y-2.5 pt-1">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="block text-[11px] font-medium text-neutral-600">
-                        Orthogonal Tags (L0–L7) · Click × to remove or toggle from taxonomy
+                        Clean Semantic #Tags · Click × to remove or toggle from catalog
                       </label>
                       <div className="flex items-center gap-1.5">
                         <button
@@ -709,10 +734,25 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
                           onClick={() => handleQuickTagMutation('redefine')}
                           disabled={mutatingTag}
                           className="px-2 py-1 text-[11px] font-medium bg-neutral-900 hover:bg-neutral-800 text-white rounded-md transition-colors flex items-center gap-1"
-                          title="Replace word-salad tags with curated Orthogonal Taxonomy tags (type/, domain/, project/, status/, stage/, knowledge/)"
+                          title="Auto-curate clean semantic #tags (e.g. #Hermes, #AI, #research, #active) from full note meaning"
                         >
                           <Sparkles className="w-3 h-3 text-emerald-400" />
-                          <span>Redefine Tags (L0–L7)</span>
+                          <span>Auto-Curate Clean #Tags</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onOpenClustersTab) {
+                              onOpenClustersTab();
+                            } else {
+                              setShowTagManagerModal(true);
+                            }
+                          }}
+                          className="px-2 py-1 text-[11px] font-medium bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-200 rounded-md transition-colors flex items-center gap-1"
+                          title="Open Semantic Clusters, Project #Tags & File Import"
+                        >
+                          <Tag className="w-3 h-3 text-emerald-600" />
+                          <span>Clusters & #Tag Manager</span>
                         </button>
                         <button
                           type="button"
@@ -747,7 +787,7 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
                         ))}
                       {editTags.trim().length === 0 && (
                         <span className="text-[11px] text-neutral-400">
-                          No tags assigned — click "Redefine Tags (L0–L7)" or pick below.
+                          No tags assigned — click "Redefine Tags (L0–L7)" or open "+ Taxonomy Picker".
                         </span>
                       )}
                     </div>
@@ -842,7 +882,7 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
                                       handleAddCustomTaxonomyTag();
                                     }
                                   }}
-                                  placeholder={`Add tag to ${currentAxis.prefix || currentAxis.id + '/'} (e.g. ${currentAxis.prefix || ''}custom-tag)...`}
+                                  placeholder={`Add clean #tag to ${currentAxis.label} (e.g. Hermes, AI, research)...`}
                                   className="flex-1 bg-white border border-neutral-200 rounded-lg px-2.5 py-1 text-[11px] font-mono text-neutral-800 focus:outline-none focus:ring-1 focus:ring-neutral-900"
                                 />
                                 <button
@@ -858,14 +898,6 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
                         })()}
                       </div>
                     )}
-
-                    <input
-                      type="text"
-                      value={editTags}
-                      onChange={e => setEditTags(e.target.value)}
-                      placeholder="type/research, domain/AI, project/Hermes, status/active, priority/P1"
-                      className="w-full bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-1.5 text-xs font-mono text-neutral-800 focus:outline-none focus:ring-1 focus:ring-neutral-900"
-                    />
                   </div>
                 </div>
 
@@ -952,6 +984,25 @@ export const KnowledgeExplorer: React.FC<KnowledgeExplorerProps> = ({ vaultPath,
           </div>
         )}
       </div>
+
+      {/* Modal for Tag Import/Export & Project Routing */}
+      {showTagManagerModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="max-w-5xl w-full my-8 max-h-[90vh] overflow-y-auto rounded-2xl shadow-xl">
+            <TagTaxonomyWorkspace
+              vaultPath={vaultPath}
+              compactModal={true}
+              onClose={() => setShowTagManagerModal(false)}
+              onNotify={async () => {
+                onNotify();
+                await loadTaxonomy();
+                await loadFolders();
+                await loadNotes(selectedNotePath || undefined);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Modal for Creating a New Note */}
       {showNewNoteModal && (

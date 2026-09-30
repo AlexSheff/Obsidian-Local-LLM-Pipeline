@@ -146,13 +146,13 @@ describe('C2 & C4: Hierarchical Routing and Dynamic Vault-Agnostic Discovery', (
     mergeTags(data, ['#01G23', 'w3x06', 'new-word']);
     expect(data.tags).toEqual(['existing-word', 'new-word']);
 
-    // Multi-level Orthogonal Taxonomy tags (L0-L7)
-    expect(isValidSemanticTag('type/research')).toBe(true);
-    expect(isValidSemanticTag('domain/AI/LLM')).toBe(true);
-    expect(isValidSemanticTag('project/Hermes')).toBe(true);
-    expect(isValidSemanticTag('priority/P1')).toBe(true);
-    expect(isValidSemanticTag('concept/World-1149')).toBe(true);
-    expect(isValidSemanticTag('a/b/c/d')).toBe(false); // Exceeds max depth of 3
+    // Clean slash-free canonical tags (no / prefixes allowed)
+    expect(isValidSemanticTag('research')).toBe(true);
+    expect(isValidSemanticTag('Hermes')).toBe(true);
+    expect(isValidSemanticTag('World-1149')).toBe(true);
+    expect(isValidSemanticTag('24+1')).toBe(true);
+    expect(isValidSemanticTag('E=M×C²')).toBe(true);
+    expect(isValidSemanticTag('type/research')).toBe(false); // Slashes are stripped by normalizeToCanonicalTag
 
     const curated = curateOrthogonalTags({
       rawTags: ['#01G23', 'w3x06', 'architecture', 'ai', 'p1'],
@@ -162,9 +162,10 @@ describe('C2 & C4: Hierarchical Routing and Dynamic Vault-Agnostic Discovery', (
       folder: '03_Knowledge/Technical',
       replaceExisting: true
     });
-    expect(curated).toContain('domain/AI/agents');
-    expect(curated).toContain('project/Hermes');
-    expect(curated).toContain('priority/P1');
+    expect(curated).toContain('agents');
+    expect(curated).toContain('Hermes');
+    expect(curated).toContain('AI');
+    expect(curated.every(t => !t.includes('/'))).toBe(true);
     expect(curated.some(t => t.includes('01G23'))).toBe(false);
   });
 

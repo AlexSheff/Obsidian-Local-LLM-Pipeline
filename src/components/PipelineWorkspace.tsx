@@ -71,7 +71,7 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
   const [purgingGhosts, setPurgingGhosts] = useState(false);
   const [runningUnified, setRunningUnified] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState<
-    'overview' | 'tags' | 'triage' | 'revisor' | 'duplicates' | 'hypergraph'
+    'overview' | 'triage' | 'revisor' | 'duplicates' | 'hypergraph'
   >('overview');
   const [actionFeedback, setActionFeedback] = useState<{
     message: string;
@@ -87,6 +87,9 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
   const [pruningEmpty, setPruningEmpty] = useState(false);
   const [syncingProjects, setSyncingProjects] = useState(false);
   const [normalizingTags, setNormalizingTags] = useState(false);
+  const [lastSnapshotId, setLastSnapshotId] = useState<string | null>(null);
+  const [rollingBackSnapshot, setRollingBackSnapshot] = useState(false);
+  const [creatingDemo, setCreatingDemo] = useState(false);
 
   useEffect(() => {
     setVaultPathInput(config.vaultPath || '');
@@ -191,6 +194,9 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
         dryRun: false,
         routeFiles: true
       });
+      if (res.data?.snapshotId) {
+        setLastSnapshotId(res.data.snapshotId);
+      }
       await fetchVaultStructure();
       fetchRegistry();
       onRefreshLogs();
@@ -210,34 +216,101 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
     }
   };
 
+  const handleRollbackSnapshot = async () => {
+    if (!lastSnapshotId) return;
+    setRollingBackSnapshot(true);
+    try {
+      const res = await axios.post('/api/snapshots/rollback', {
+        snapshotId: lastSnapshotId
+      });
+      setLastSnapshotId(null);
+      await fetchVaultStructure();
+      fetchRegistry();
+      onRefreshLogs();
+      setActionFeedback({
+        message: res.data?.message || 'Rolled back snapshot and restored files to their original paths and tags.',
+        type: 'info'
+      });
+    } catch (err: any) {
+      setActionFeedback({
+        message: 'Rollback failed: ' + (err.response?.data?.error || err.message),
+        type: 'error'
+      });
+    } finally {
+      setRollingBackSnapshot(false);
+    }
+  };
+
+  const handleCreateDemoVault = async () => {
+    setCreatingDemo(true);
+    setActionFeedback(null);
+    try {
+      const res = await axios.post('/api/vault/create-demo');
+      if (res.data?.config) {
+        await onSaveConfig(res.data.config);
+      }
+      await fetchVaultStructure();
+      fetchRegistry();
+      onRefreshLogs();
+      setActionFeedback({
+        message: res.data?.message || 'Sample Obsidian Vault created and connected!',
+        type: 'success'
+      });
+    } catch (err: any) {
+      setActionFeedback({
+        message: 'Sample vault creation failed: ' + (err.response?.data?.error || err.message),
+        type: 'error'
+      });
+    } finally {
+      setCreatingDemo(false);
+    }
+  };
+
   const handleRunUnifiedPipeline = async () => {
     setRunningUnified(true);
     setActionFeedback(null);
     try {
-      // Stage 1: Purge empty ghost files
+      // Stage 1: Sync discovered project folders
+      await axios.post('/api/projects/bootstrap').catch(() => {});
+
+      // Stage 2: Purge empty ghost files
       const ghostRes = await axios.post('/api/vault/purge-ghosts').catch(() => ({ data: { purgedCount: 0 } }));
       const purged = ghostRes.data?.purgedCount || 0;
 
-      // Stage 2: Clean exact duplicates
+      // Stage 3: Clean exact duplicates & merge unique tags
       const dupRes = await axios
         .post('/api/duplicates/clean', { allExact: true })
         .catch(() => ({ data: { removedCount: 0 } }));
       const deduped = dupRes.data?.removedCount || 0;
 
-      // Stage 3: Prune any existing empty directories
+      // Stage 4: Deterministic Project Detection, Orthogonal Tag Update (L0-L7) & Tag-Based Directory Routing
+      const tagRouteRes = await axios
+        .post('/api/vault/tags/classify-and-route', {
+          dryRun: false,
+          routeFiles: true
+        })
+        .catch(() => ({ data: { updatedCount: 0, movedCount: 0, projectsMatchedCount: 0, snapshotId: null } }));
+      const tagsUpdated = tagRouteRes.data?.updatedCount || 0;
+      const tagMoved = tagRouteRes.data?.movedCount || 0;
+      if (tagRouteRes.data?.snapshotId) {
+        setLastSnapshotId(tagRouteRes.data.snapshotId);
+      }
+
+      // Stage 5: Prune any existing empty directories & queue Jev + LLM Dual-Model Enrichment
       const pruneRes = await axios
         .post('/api/vault/prune-empty')
         .catch(() => ({ data: { prunedCount: 0 } }));
-      const pruned = pruneRes.data?.prunedCount || 0;
+      const pruned = (pruneRes.data?.prunedCount || 0) + (tagRouteRes.data?.prunedFoldersCount || 0);
 
-      // Stage 4: Run Jev + LLM Dual-Model Vault Classification (auto-prunes empty folders on completion)
-      const refineRes = await axios.post('/api/refine-vault', {
-        force: forceRefine,
-        smartRename
-      });
+      const refineRes = await axios
+        .post('/api/refine-vault', {
+          force: forceRefine,
+          smartRename
+        })
+        .catch(() => ({ data: { total: 0 } }));
 
       setActionFeedback({
-        message: `Full Auto-Pipeline started: purged ${purged} ghost note(s), merged ${deduped} duplicate(s), pruned ${pruned} empty folder(s), and queued ${refineRes.data?.total || 0} notes for Jev + LLM sorting.`,
+        message: `Full Auto-Pipeline complete: updated L0–L7 tags on ${tagsUpdated} note(s), routed ${tagMoved} file(s) to project/PARA folders, purged ${purged} ghost note(s), merged ${deduped} duplicate(s), pruned ${pruned} empty folder(s), and queued ${refineRes.data?.total || 0} note(s) for Jev + LLM enrichment.`,
         type: 'success'
       });
       fetchRegistry();
@@ -349,22 +422,17 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
 
           <div className="flex flex-wrap items-center gap-2.5">
             <button
-              onClick={onToggleWatcher}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-xs transition-colors whitespace-nowrap ${
-                isWatching
-                  ? 'bg-neutral-100 text-neutral-800 hover:bg-neutral-200 border border-neutral-200'
-                  : 'bg-neutral-900 text-white hover:bg-neutral-800'
-              }`}
+              onClick={handleRunUnifiedPipeline}
+              disabled={runningUnified || refineData.isRefining}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-xs bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50 transition-colors whitespace-nowrap"
+              title="1-Click Autopilot: Sync Projects -> Purge Ghosts -> Deduplicate -> Update L0-L7 Tags & Route Files -> Prune Empty Folders"
             >
-              {isWatching ? (
-                <>
-                  <Square className="w-3.5 h-3.5" /> Stop 00_Inbox Watcher
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 text-emerald-400" /> Start 00_Inbox Watcher
-                </>
-              )}
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>
+                {runningUnified
+                  ? 'Running Full Auto-Pipeline...'
+                  : '3. Run Full Auto-Pipeline (Tag + Route + Clean)'}
+              </span>
             </button>
 
             <button
@@ -401,77 +469,69 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
             </div>
           </div>
 
-          <div className="md:col-span-1">
+          <div className="md:col-span-1 flex gap-2">
             <button
               onClick={onInitVault}
-              className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-800 px-3 py-2 rounded-lg text-xs font-medium transition-colors border border-neutral-200 whitespace-nowrap"
+              className="flex-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 px-3 py-2 rounded-lg text-xs font-medium transition-colors border border-neutral-200 whitespace-nowrap"
             >
-              2. Initialize PARA Folders
+              2. Init PARA
+            </button>
+            <button
+              onClick={handleCreateDemoVault}
+              disabled={creatingDemo}
+              title="Create and connect a ready-to-use Sample Obsidian Vault with 5 notes in 00_Inbox"
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap"
+            >
+              {creatingDemo ? '...' : 'Sample Vault'}
             </button>
           </div>
         </div>
 
-        <div className="mt-4 p-3.5 rounded-xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-semibold text-neutral-800">
-              <span>Discovered Vault Structure (Dynamic, Zero Hardcoding):</span>
-              <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono text-[11px]">
-                {vaultStructure.folders.length} folders
-              </span>
-              <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono text-[11px]">
-                {vaultStructure.projects.length} projects
-              </span>
-            </div>
-            <div className="text-[11px] text-neutral-500">
-              {vaultStructure.projects.length > 0 ? (
-                <>
-                  Active Vault Projects:{' '}
-                  <span className="font-mono text-neutral-700">
-                    {vaultStructure.projects.map(p => p.folder).join(' • ')}
-                  </span>
-                </>
-              ) : (
-                <span>
-                  Projects and categories are automatically read from your connected Vault folders ({vaultStructure.projectsRoot}/*).
+        <div className="mt-4 pt-3.5 border-t border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 tabular-nums">
+            <span className="font-semibold text-neutral-900">
+              {vaultStructure.folders.length} folders
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-semibold text-neutral-900">
+              {vaultStructure.projects.length} projects discovered
+            </span>
+            {vaultStructure.projects.length > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono text-neutral-500">
+                  {vaultStructure.projects.map(p => p.folder).join(' · ')}
                 </span>
-              )}
-            </div>
+              </>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
-              onClick={() => setActiveToolTab('tags')}
-              className="px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-200 text-xs font-semibold transition-colors flex items-center gap-1.5"
-              title="Import/Export your custom tag list (.md / .json) and manage project hashtag profiles"
-            >
-              <Tag className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Import / Export Tags</span>
-            </button>
-            <button
               onClick={handleNormalizeAllTags}
               disabled={normalizingTags}
-              className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium transition-colors"
-              title="Detect which project each .md file belongs to, update tags (L0–L7), and distribute files into directories according to tags"
+              className="px-3 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-medium transition-colors"
+              title="Detect which project each .md file belongs to, update clean #tags, and distribute files into directories"
             >
-              {normalizingTags ? 'Tagging & Routing...' : 'Update Tags & Route by Project'}
+              {normalizingTags ? 'Tagging & Routing...' : 'Quick #Tag & Route'}
             </button>
             <button
               onClick={handleSyncVaultProjects}
               disabled={syncingProjects}
               className="px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200 text-xs font-medium transition-colors"
             >
-              {syncingProjects ? 'Scanning...' : 'Re-Scan Vault Projects'}
+              {syncingProjects ? 'Scanning...' : 'Re-Scan Projects'}
             </button>
             <button
               onClick={handlePruneEmptyFolders}
               disabled={pruningEmpty}
               className="px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200 text-xs font-medium transition-colors"
             >
-              {pruningEmpty ? 'Cleaning...' : 'Remove Empty Folders'}
+              {pruningEmpty ? 'Cleaning...' : 'Prune Empty Folders'}
             </button>
           </div>
         </div>
 
-        <div className="mt-5 pt-4 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-4 pt-3.5 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl overflow-x-auto">
             <button
               onClick={() => setActiveToolTab('overview')}
@@ -486,18 +546,6 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
             </button>
 
             <button
-              onClick={() => setActiveToolTab('tags')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
-                activeToolTab === 'tags'
-                  ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                  : 'text-neutral-600 hover:text-neutral-900'
-              }`}
-            >
-              <Tag className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Tag Import/Export & Project Router</span>
-            </button>
-
-            <button
               onClick={() => setActiveToolTab('triage')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                 activeToolTab === 'triage'
@@ -506,7 +554,7 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
               }`}
             >
               <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-              <span>Ambiguity Triage ({triageCount})</span>
+              <span className="tabular-nums">Ambiguity Triage ({triageCount})</span>
             </button>
 
             <button
@@ -549,7 +597,7 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
 
         {actionFeedback && (
           <div
-            className={`mt-4 p-3 rounded-xl border text-xs leading-relaxed ${
+            className={`mt-4 p-3 rounded-xl border text-xs leading-relaxed flex flex-wrap items-center justify-between gap-2 ${
               actionFeedback.type === 'success'
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                 : actionFeedback.type === 'error'
@@ -557,7 +605,16 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
                 : 'bg-neutral-50 border-neutral-200 text-neutral-800'
             }`}
           >
-            {actionFeedback.message}
+            <span>{actionFeedback.message}</span>
+            {lastSnapshotId && (
+              <button
+                onClick={handleRollbackSnapshot}
+                disabled={rollingBackSnapshot}
+                className="px-3 py-1 rounded-lg bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-200 text-xs font-semibold transition-colors shrink-0"
+              >
+                {rollingBackSnapshot ? 'Restoring...' : 'Undo Last Routing (Restore Snapshot)'}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -779,17 +836,6 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
             </div>
           </div>
         </div>
-      )}
-
-      {activeToolTab === 'tags' && (
-        <TagTaxonomyWorkspace
-          vaultPath={config.vaultPath}
-          onNotify={() => {
-            fetchVaultStructure();
-            fetchRegistry();
-            onRefreshLogs();
-          }}
-        />
       )}
 
       {activeToolTab === 'triage' && (

@@ -27,10 +27,10 @@ async function main() {
   console.log(`Endpoint:      http://127.0.0.1:1234`);
   console.log('Testing 3 primitives: Noul, Score, Choice(5), Choice(26)...');
 
-  const sampleState = 'Заметка о проекте CleanNet и интеграции сенсорных датчиков в экосистему.';
-  const sampleQuestion = 'Могут ли CleanNet и Сенсоры образовать осмысленную логическую связь?';
-  const sampleOptions5 = ['Чистая вода', 'Сенсоры', 'Франшиза', 'Биология', 'Архитектура'];
-  const sampleOptions26 = Array.from({ length: 26 }, (_, idx) => `Концепт-${String.fromCharCode(65 + idx)}`);
+  const sampleState = '\u0417\u0430\u043c\u0435\u0442\u043a\u0430 \u043e \u043f\u0440\u043e\u0435\u043a\u0442\u0435 CleanNet \u0438 \u0438\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u0438 \u0441\u0435\u043d\u0441\u043e\u0440\u043d\u044b\u0445 \u0434\u0430\u0442\u0447\u0438\u043a\u043e\u0432 \u0432 \u044d\u043a\u043e\u0441\u0438\u0441\u0442\u0435\u043c\u0443.';
+  const sampleQuestion = '\u041c\u043e\u0433\u0443\u0442 \u043b\u0438 CleanNet \u0438 \u0421\u0435\u043d\u0441\u043e\u0440\u044b \u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u0442\u044c \u043e\u0441\u043c\u044b\u0441\u043b\u0435\u043d\u043d\u0443\u044e \u043b\u043e\u0433\u0438\u0447\u0435\u0441\u043a\u0443\u044e \u0441\u0432\u044f\u0437\u044c?';
+  const sampleOptions5 = ['\u0427\u0438\u0441\u0442\u0430\u044f \u0432\u043e\u0434\u0430', '\u0421\u0435\u043d\u0441\u043e\u0440\u044b', '\u0424\u0440\u0430\u043d\u0448\u0438\u0437\u0430', '\u0411\u0438\u043e\u043b\u043e\u0433\u0438\u044f', '\u0410\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\u0430'];
+  const sampleOptions26 = Array.from({ length: 26 }, (_, idx) => `\u041a\u043e\u043d\u0446\u0435\u043f\u0442-${String.fromCharCode(65 + idx)}`);
 
   const noulLatencies: number[] = [];
   const scoreLatencies: number[] = [];
@@ -52,7 +52,7 @@ async function main() {
     // 2. Score
     const t1 = Date.now();
     try {
-      await score(sampleState, 'Оцени силу связи CleanNet — Сенсоры — Вода по шкале 1–5');
+      await score(sampleState, '\u041e\u0446\u0435\u043d\u0438 \u0441\u0438\u043b\u0443 \u0441\u0432\u044f\u0437\u0438 CleanNet — \u0421\u0435\u043d\u0441\u043e\u0440\u044b — \u0412\u043e\u0434\u0430 \u043f\u043e \u0448\u043a\u0430\u043b\u0435 1–5');
       scoreLatencies.push(Date.now() - t1);
     } catch {
       scoreLatencies.push(Date.now() - t1);
@@ -61,7 +61,7 @@ async function main() {
     // 3. Choice 5
     const t2 = Date.now();
     try {
-      await choice(sampleState, 'Какое понятие связано ближе всего?', sampleOptions5);
+      await choice(sampleState, '\u041a\u0430\u043a\u043e\u0435 \u043f\u043e\u043d\u044f\u0442\u0438\u0435 \u0441\u0432\u044f\u0437\u0430\u043d\u043e \u0431\u043b\u0438\u0436\u0435 \u0432\u0441\u0435\u0433\u043e?', sampleOptions5);
       choice5Latencies.push(Date.now() - t2);
     } catch {
       choice5Latencies.push(Date.now() - t2);
@@ -70,7 +70,7 @@ async function main() {
     // 4. Choice 26
     const t3 = Date.now();
     try {
-      await choice(sampleState, 'Какое понятие связано ближе всего?', sampleOptions26);
+      await choice(sampleState, '\u041a\u0430\u043a\u043e\u0435 \u043f\u043e\u043d\u044f\u0442\u0438\u0435 \u0441\u0432\u044f\u0437\u0430\u043d\u043e \u0431\u043b\u0438\u0436\u0435 \u0432\u0441\u0435\u0433\u043e?', sampleOptions26);
       choice26Latencies.push(Date.now() - t3);
     } catch {
       choice26Latencies.push(Date.now() - t3);

@@ -79,7 +79,7 @@ export function generateProjectAliases(rawName: string): string[] {
 
   // If the folder has a generic suffix like "Franchise", "Project", "System", "Pilot", also add the core brand token
   const strippedBrand = spaced
-    .replace(/\b(franchise|project|system|pilot|app|platform|protocol|проект|франшиза|система|платформа)\b/gi, '')
+    .replace(/\b(franchise|project|system|pilot|app|platform|protocol|\u043f\u0440\u043e\u0435\u043a\u0442|\u0444\u0440\u0430\u043d\u0448\u0438\u0437\u0430|\u0441\u0438\u0441\u0442\u0435\u043c\u0430|\u043f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u0430)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (strippedBrand && strippedBrand.length >= 3) {
@@ -137,14 +137,14 @@ export function generateProjectAliases(rawName: string): string[] {
 }
 
 /**
- * Detects the primary projects root folder in a user's vault (e.g. "01_Projects", "Projects", "Проекты").
+ * Detects the primary projects root folder in a user's vault (e.g. "01_Projects", "Projects").
  */
 export async function detectProjectsRootFolder(vaultPath: string): Promise<string> {
   if (!vaultPath || !fs.existsSync(vaultPath)) return '01_Projects';
   try {
     const entries = await fsPromises.readdir(vaultPath, { withFileTypes: true });
     const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name);
-    const preferred = ['01_Projects', 'Projects', '01_Проекты', 'Проекты'];
+    const preferred = ['01_Projects', 'Projects', '01_\u041f\u0440\u043e\u0435\u043a\u0442\u044b', '\u041f\u0440\u043e\u0435\u043a\u0442\u044b'];
     for (const pref of preferred) {
       const found = dirs.find(d => d.toLowerCase() === pref.toLowerCase());
       if (found) return found;

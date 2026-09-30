@@ -67,13 +67,13 @@ export class TokensRegistry {
     }
 
     // Ensure service linker token is registered
-    if (!this.tokens.has('связано-с')) {
-      this.tokens.set('связано-с', {
-        key: 'связано-с',
+    if (!this.tokens.has('\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441')) {
+      this.tokens.set('\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441', {
+        key: '\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441',
         kind: 'linker',
         sourceNote: 'system',
         firstSeenAt: new Date().toISOString(),
-        aliases: ['связано-с', 'related-to'],
+        aliases: ['\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441', 'related-to'],
         deprecated: false,
         schemaVersion: 1
       });

@@ -142,16 +142,16 @@ export class DnaEngine {
 
     const stateSnippet = noteText.slice(0, 1000);
 
-    // 1. Hybridization (Noul) on pairs with linker 'связано-с'
+    // 1. Hybridization (Noul) on pairs with default semantic linker
     for (const [a, b] of pairsToEvaluate) {
       if (costTracker?.isLimitExceeded()) break;
 
       evaluated++;
-      const triple: [string, string, string] = [a, b, 'связано-с'];
+      const triple: [string, string, string] = [a, b, '\u0441\u0432\u044f\u0437\u0430\u043d\u043e-\u0441'];
       const edgeId = computeHyperedgeId(triple);
       const existing = this.edges.get(edgeId);
 
-      const question = `Могут ли понятия «${a}» и «${b}» образовать осмысленную логическую связь?`;
+      const question = `\u041c\u043e\u0433\u0443\u0442 \u043b\u0438 \u043f\u043e\u043d\u044f\u0442\u0438\u044f «${a}» \u0438 «${b}» \u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u0442\u044c \u043e\u0441\u043c\u044b\u0441\u043b\u0435\u043d\u043d\u0443\u044e \u043b\u043e\u0433\u0438\u0447\u0435\u0441\u043a\u0443\u044e \u0441\u0432\u044f\u0437\u044c?`;
       const p = await noul(stateSnippet, question, opts);
 
       if (p >= this.hybridMin) {
@@ -194,7 +194,7 @@ export class DnaEngine {
       const edgeId = computeHyperedgeId(triple);
       const existing = this.edges.get(edgeId);
 
-      const question = `Оцени семантическую силу связи «${a} — ${b} — ${c}» по шкале 1–5`;
+      const question = `\u041e\u0446\u0435\u043d\u0438 \u0441\u0435\u043c\u0430\u043d\u0442\u0438\u0447\u0435\u0441\u043a\u0443\u044e \u0441\u0438\u043b\u0443 \u0441\u0432\u044f\u0437\u0438 «${a} — ${b} — ${c}» \u043f\u043e \u0448\u043a\u0430\u043b\u0435 1–5`;
       const scoreRating = await score(stateSnippet, question, [1, 5], opts);
       const weight = Math.round((scoreRating / 5) * 100) / 100;
 

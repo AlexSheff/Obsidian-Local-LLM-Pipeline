@@ -65,6 +65,7 @@ export interface DirectoryAuditReport {
 }
 
 interface DirectoryRevisorProps {
+  vaultPath?: string;
   onNotify: () => void;
 }
 
@@ -144,10 +145,10 @@ export const DirectoryRevisor: React.FC<DirectoryRevisorProps> = ({ onNotify }) 
       const auditData: DirectoryAuditReport = res.data;
       setReport(auditData);
 
-      // Do not auto-select items by default (R6): user explicitly selects via checkboxes
+      // Auto-select detected outliers, junk, and raw docs for 1-click remediation
       const initialItems = (auditData.items || []).map(item => ({
         ...item,
-        selectedForMove: false
+        selectedForMove: Boolean(item.isOutlier || item.isJunk || item.isRawDoc)
       }));
 
       setItems(initialItems);

@@ -22,8 +22,10 @@ import {
   exportTagTaxonomyToMarkdown,
   inferProjectFromNoteAndTaxonomy,
   resolveDirectoryFromTags,
+  normalizeToCanonicalTag,
   VaultTagTaxonomyConfig
 } from './src/server/tags';
+import { buildSemanticKnowledgeClusters, ClusterableNoteInput } from './src/server/semanticClustering';
 import { sanitizeTitle } from './src/server/sanitize';
 import { createSnapshotSession, restoreSnapshotSession, SnapshotSession } from './src/server/snapshot';
 import {
@@ -390,9 +392,9 @@ function getNormalizedBody(content: string): string {
   if (fmMatch) {
     body = fmMatch[1];
   }
-  // 2. Strip standard generated lines like `> **Связанные темы:** ...` or `**Исходный файл:** ...`
-  body = body.replace(/^>\s*\*\*Связанные темы:\*\*.*$/gm, '');
-  body = body.replace(/^\*\*Исходный файл:\*\*.*$/gm, '');
+  // 2. Strip standard generated callout/source lines
+  body = body.replace(/^>\s*\*\*\u0421\u0432\u044f\u0437\u0430\u043d\u043d\u044b\u0435 \u0442\u0435\u043c\u044b:\*\*.*$/gm, '');
+  body = body.replace(/^\*\*\u0418\u0441\u0445\u043e\u0434\u043d\u044b\u0439 \u0444\u0430\u0439\u043b:\*\*.*$/gm, '');
   // 3. Normalize newlines, collapse spaces and multiple blank lines, and trim
   return body.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
@@ -1062,14 +1064,15 @@ ${existingFoldersContext}
 
 ### ORTHOGONAL MULTI-LEVEL TAGGING RULES (L0-L7) & MANDATORY LANGUAGE TAG:
 - MANDATORY LANGUAGE TAG: Include the language code ("ru", "en", or "ph") in improved_tags.
-- DO NOT generate random flat words from the text! Instead, assign 4 to 7 structured ORTHOGONAL TAXONOMY tags that answer:
-  * L1 TYPE (what is it?): e.g. "type/project", "type/research", "type/whitepaper", "type/scenario", "type/idea", "type/task", "type/meeting", "type/concept", "type/protocol", "type/reference"
-  * L2 DOMAIN (what field?): e.g. "domain/AI", "domain/AI/agents", "domain/AI/LLM", "domain/semantics", "domain/hypergraph", "domain/knowledge-management", "domain/software", "domain/philosophy", "domain/film", "domain/transmedia", "domain/business", "domain/economy"
-  * L3 PROJECT / RESEARCH (if applicable): e.g. "project/<ProjectName>", "research/semantic-hypergraph", "research/JeV-response"
-  * L4 SYSTEM / CONCEPT (function): e.g. "system/agent-orchestration", "system/routing", "system/classification", "system/tagging"
-  * KNOWLEDGE AXIS (epistemic role): e.g. "knowledge/model", "knowledge/hypothesis", "knowledge/specification", "knowledge/decision", "knowledge/fact"
-  * L5 STATUS & L7 STAGE: e.g. "status/active", "status/idea", "status/research", "stage/design", "stage/implementation", "stage/validation"
-  * L6 PRIORITY (optional): "priority/P0", "priority/P1", "priority/P2", "priority/P3"
+- CLEAN ATOMIC TAGS ONLY (NO SLASHES '/'): NEVER use "/" in tags! Every tag must be a clean, flat word or hyphenated term.
+- Assign 4 to 7 structured ORTHOGONAL TAXONOMY tags that answer:
+  * L1 TYPE (what is it?): e.g. "project", "research", "whitepaper", "scenario", "idea", "task", "meeting", "concept", "protocol", "reference"
+  * L2 DOMAIN (what field?): e.g. "AI", "agents", "LLM", "semantics", "hypergraph", "knowledge-management", "software", "philosophy", "film", "transmedia", "business", "economy"
+  * L3 PROJECT / RESEARCH (if applicable): e.g. "<ProjectName>", "Hermes", "Neuromicon", "UUCPFF", "semantic-hypergraph", "JeV-response"
+  * L4 SYSTEM / CONCEPT (function): e.g. "agent-orchestration", "routing", "classification", "tagging", "semantic-ingestion", "World-1149"
+  * KNOWLEDGE AXIS (epistemic role): e.g. "model", "hypothesis", "specification", "decision", "fact"
+  * L5 STATUS & L7 STAGE: e.g. "active", "idea", "prototype", "design", "implementation", "validation"
+  * L6 PRIORITY (optional): "P0", "P1", "P2", "P3"
 - NEVER generate random alphanumeric codes like "#01G23" or numbers.
 ${decisionGuidance}
 
@@ -1083,7 +1086,7 @@ ${textToProcess}
 Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
 {
   "improved_title": "Clean Human Title (2-5 words)",
-  "improved_tags": ["ru", "type/research", "domain/AI", "status/active"],
+  "improved_tags": ["ru", "research", "AI", "active"],
   "suggested_path": "03_Knowledge/Essays"
 }`;
 
@@ -1830,10 +1833,10 @@ Extract these exactly 5 fields in valid JSON format:
 
   let linksBlock = '';
   const concepts = formatArray(data.related_concepts);
-  const alreadyHasCallout = fullConvertedText.includes('Связанные темы') || fullConvertedText.includes('Related Topics');
+  const alreadyHasCallout = fullConvertedText.includes('\u0421\u0432\u044f\u0437\u0430\u043d\u043d\u044b\u0435 \u0442\u0435\u043c\u044b') || fullConvertedText.includes('Related Topics');
   if (concepts.length > 0 && !alreadyHasCallout) {
     const isRu = detectDocumentLanguage(fullConvertedText, originalFilename).primary === 'ru';
-    const label = isRu ? 'Связанные темы' : 'Related Topics';
+    const label = isRu ? '\u0421\u0432\u044f\u0437\u0430\u043d\u043d\u044b\u0435 \u0442\u0435\u043c\u044b' : 'Related Topics';
     linksBlock = `> **${label}:** ${concepts.map((c: string) => `[[${c}]]`).join(', ')}\n\n`;
   }
 
@@ -1853,7 +1856,7 @@ Extract these exactly 5 fields in valid JSON format:
     }
     
     const isRu = detectDocumentLanguage(fullConvertedText, originalFilename).primary === 'ru';
-    const sourceLabel = isRu ? 'Исходный файл' : 'Source File';
+    const sourceLabel = isRu ? '\u0418\u0441\u0445\u043e\u0434\u043d\u044b\u0439 \u0444\u0430\u0439\u043b' : 'Source File';
     noteBody += `**${sourceLabel}:** [[${resourceFilename}]]\n\n---\n\n`;
     if (!isBinary) {
        noteBody += fullConvertedText;
@@ -3734,7 +3737,7 @@ app.post('/api/vault/note/save', async (req, res) => {
 app.post('/api/vault/note/create', async (req, res) => {
   if (!currentConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });
   const { title, folder, tags, body } = req.body || {};
-  const cleanTitle = String(title || 'Новая заметка')
+  const cleanTitle = String(title || 'Untitled Note')
     .replace(/[\\/:*?"<>|]/g, '')
     .trim();
   const targetFolder = String(folder || '01_Projects/Active')
@@ -3823,17 +3826,17 @@ app.post('/api/tags/taxonomy', async (req, res) => {
       if (!targetAxis) {
         return res.status(404).json({ error: `Taxonomy axis "${axisId}" not found` });
       }
-      const cleanTag = String(tag).trim().replace(/^#+/, '').trim();
+      const cleanTag = normalizeToCanonicalTag(String(tag).trim().replace(/^#+/, '').trim());
+      if (!cleanTag) {
+        return res.status(400).json({ error: 'Valid tag is required' });
+      }
       if (action === 'add') {
-        const formatted =
-          targetAxis.prefix && !cleanTag.includes('/')
-            ? `${targetAxis.prefix}${cleanTag}`
-            : cleanTag;
+        const formatted = cleanTag;
         if (!targetAxis.tags.some(t => t.toLowerCase() === formatted.toLowerCase())) {
           targetAxis.tags.push(formatted);
         }
-        if (formatted.toLowerCase().startsWith('project/')) {
-          const pName = formatted.slice('project/'.length);
+        if (targetAxis.id === 'project') {
+          const pName = formatted;
           const pRoot = currentConfig.vaultPath ? await detectProjectsRootFolder(currentConfig.vaultPath) : '01_Projects';
           if (!cfg.projectProfiles.some(p => p.projectTag.toLowerCase() === formatted.toLowerCase())) {
             cfg.projectProfiles.push({
@@ -3848,18 +3851,20 @@ app.post('/api/tags/taxonomy', async (req, res) => {
             cfg.tagRoutes[formatted] = `${pRoot}/${pName}`;
           }
         }
-        addLog(`[Tag Taxonomy] Added tag "#${formatted}" to ${targetAxis.label}`, 'success');
+        addLog(`[Tag Taxonomy] Added clean tag "#${formatted}" to ${targetAxis.label}`, 'success');
       } else {
         targetAxis.tags = targetAxis.tags.filter(t => t.toLowerCase() !== cleanTag.toLowerCase());
         addLog(`[Tag Taxonomy] Removed tag "#${cleanTag}" from ${targetAxis.label}`, 'info');
       }
     } else if (action === 'upsert_project_profile' && projectProfile) {
       const id = String(projectProfile.id || '').trim();
-      const projectTag = String(projectProfile.projectTag || `project/${id}`).trim().replace(/^#+/, '');
+      const projectTag = normalizeToCanonicalTag(String(projectProfile.projectTag || id).trim().replace(/^#+/, '')) || id;
       const pRoot = currentConfig.vaultPath ? await detectProjectsRootFolder(currentConfig.vaultPath) : '01_Projects';
       const folder = String(projectProfile.targetFolder || `${pRoot}/${id}`).trim();
       const associatedTags = Array.isArray(projectProfile.associatedTags)
-        ? projectProfile.associatedTags.map((t: unknown) => String(t).trim().replace(/^#+/, '')).filter(Boolean)
+        ? projectProfile.associatedTags
+            .map((t: unknown) => normalizeToCanonicalTag(String(t).trim().replace(/^#+/, '')))
+            .filter(Boolean)
         : [projectTag];
       if (!associatedTags.some((t: string) => t.toLowerCase() === projectTag.toLowerCase())) {
         associatedTags.unshift(projectTag);
@@ -3880,20 +3885,20 @@ app.post('/api/tags/taxonomy', async (req, res) => {
       if (projAxis && !projAxis.tags.some(t => t.toLowerCase() === projectTag.toLowerCase())) {
         projAxis.tags.push(projectTag);
       }
-      addLog(`[Tag Taxonomy] Saved project profile "${projectTag}" -> "${folder}" (${associatedTags.length} tags)`, 'success');
+      addLog(`[Tag Taxonomy] Saved project profile "#${projectTag}" -> "${folder}" (${associatedTags.length} tags)`, 'success');
     } else if (action === 'remove_project_profile' && tag) {
-      const clean = String(tag).trim().replace(/^#+/, '').toLowerCase();
+      const clean = normalizeToCanonicalTag(String(tag).trim().replace(/^#+/, '')).toLowerCase();
       cfg.projectProfiles = cfg.projectProfiles.filter(p => p.projectTag.toLowerCase() !== clean && p.id.toLowerCase() !== clean);
       addLog(`[Tag Taxonomy] Removed project profile "${tag}"`, 'info');
     } else if (action === 'set_route' && routeTag && targetFolder) {
-      const cleanTag = String(routeTag).trim().replace(/^#+/, '');
+      const cleanTag = normalizeToCanonicalTag(String(routeTag).trim().replace(/^#+/, ''));
       const cleanFolder = String(targetFolder).trim().replace(/^\/+|\/+$/g, '');
       cfg.tagRoutes[cleanTag] = cleanFolder;
       const prof = cfg.projectProfiles.find(p => p.projectTag.toLowerCase() === cleanTag.toLowerCase());
       if (prof) prof.targetFolder = cleanFolder;
       addLog(`[Tag Taxonomy] Mapped tag "#${cleanTag}" -> directory "${cleanFolder}"`, 'success');
     } else if (action === 'remove_route' && routeTag) {
-      const cleanTag = String(routeTag).trim().replace(/^#+/, '');
+      const cleanTag = normalizeToCanonicalTag(String(routeTag).trim().replace(/^#+/, ''));
       delete cfg.tagRoutes[cleanTag];
       addLog(`[Tag Taxonomy] Removed custom directory route for "#${cleanTag}"`, 'info');
     } else {
@@ -4161,9 +4166,12 @@ const handleClassifyTagsAndRouteVault = async (req: express.Request, res: expres
       return res.status(400).json({ error: 'Invalid target scan folder' });
     }
 
-    const allFiles = await getFilesRecursively(scanRoot, [], true, false);
+    const allFiles = await getFilesRecursively(scanRoot, [], true, true);
     const snapshot = !dryRun
-      ? createSnapshotSession(currentConfig.vaultPath, 'taxonomy_project_tag_route')
+      ? createSnapshotSession(
+          currentConfig.vaultPath,
+          `taxonomy_route_${new Date().toISOString().replace(/[:.]/g, '-')}`
+        )
       : null;
 
     let updatedCount = 0;
@@ -4288,6 +4296,7 @@ const handleClassifyTagsAndRouteVault = async (req: express.Request, res: expres
               }
               if (path.resolve(filePath) !== path.resolve(destPath)) {
                 affectedDirs.add(path.dirname(filePath));
+                await snapshot.recordMove?.(filePath, destPath);
                 await fsPromises.rename(filePath, destPath);
                 triageManager.syncRefinedFile(filePath, destPath, cleanTargetFolder, path.basename(destPath));
                 finalNewRelPath = path.relative(currentConfig.vaultPath, destPath).replace(/\\/g, '/');
@@ -4360,6 +4369,339 @@ const handleClassifyTagsAndRouteVault = async (req: express.Request, res: expres
 app.post('/api/vault/tags/reclassify-all', handleClassifyTagsAndRouteVault);
 app.post('/api/vault/tags/classify-and-route', handleClassifyTagsAndRouteVault);
 
+app.post('/api/snapshots/rollback', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  const sessionId = String(req.body?.snapshotId || req.body?.sessionId || '').trim();
+  if (!sessionId || sessionId.includes('..') || sessionId.includes('/') || sessionId.includes('\\')) {
+    return res.status(400).json({ error: 'Valid snapshotId is required' });
+  }
+
+  try {
+    const result = await restoreSnapshotSession(currentConfig.vaultPath, sessionId);
+    let prunedCount = 0;
+    try {
+      const swept = await pruneEmptyDirectories(currentConfig.vaultPath, currentConfig.vaultPath);
+      prunedCount = swept.length;
+    } catch {}
+
+    addLog(
+      `[Snapshot Rollback] Restored ${result.restoredCount} file(s) from snapshot "${sessionId}"${prunedCount > 0 ? ` and pruned ${prunedCount} empty folder(s)` : ''}.`,
+      'success'
+    );
+    res.json({
+      success: true,
+      snapshotId: sessionId,
+      restoredCount: result.restoredCount,
+      prunedCount,
+      errors: result.errors,
+      message: `Rolled back snapshot "${sessionId}": restored ${result.restoredCount} file(s) to their original paths and tags.`
+    });
+  } catch (err: any) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+app.get('/api/vault/clusters', async (_req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.json({
+      clusters: [],
+      semanticBridges: [],
+      totalNotes: 0,
+      totalClusters: 0,
+      misplacedNotesCount: 0
+    });
+  }
+  try {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+    const allFiles = await getFilesRecursively(currentConfig.vaultPath, [], true, true);
+
+    const clusterableNotes: ClusterableNoteInput[] = [];
+    for (const filePath of allFiles) {
+      try {
+        const content = await fsPromises.readFile(filePath, 'utf-8');
+        const parsed = parseNote(content);
+        if (!parsed.body.trim()) continue;
+        const ghost = checkGhostNote(parsed.body);
+        if (ghost.isGhost) continue;
+
+        const rel = path.relative(currentConfig.vaultPath, filePath).replace(/\\/g, '/');
+        const folderRel = path.dirname(rel).replace(/\\/g, '/');
+        const currentFolder = folderRel === '.' ? '' : folderRel;
+        const filename = path.basename(filePath);
+        const title = String(parsed.data.title || path.basename(filePath, '.md'));
+        const fmTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+        const inlineTags = extractTags(
+          parsed.hadFrontmatter ? serializeNote(parsed.data, '') : '',
+          parsed.body,
+          filename
+        );
+        const mergedTags = Array.from(new Set([...fmTags, ...inlineTags]));
+
+        clusterableNotes.push({
+          path: rel,
+          filename,
+          title,
+          body: parsed.body,
+          folder: currentFolder,
+          tags: mergedTags
+        });
+      } catch {}
+    }
+
+    const result = buildSemanticKnowledgeClusters({
+      notes: clusterableNotes,
+      projectProfiles: taxonomyCfg.projectProfiles,
+      discoveredProjects: projects,
+      axes: taxonomyCfg.axes,
+      tagRoutes: taxonomyCfg.tagRoutes,
+      projectsRoot
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/clusters/apply', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  const { clusterId, routeFiles = true, extraTags = [], overrideFolder } = req.body || {};
+
+  try {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+    const allFiles = await getFilesRecursively(currentConfig.vaultPath, [], true, true);
+
+    const clusterableNotes: ClusterableNoteInput[] = [];
+    for (const filePath of allFiles) {
+      try {
+        const content = await fsPromises.readFile(filePath, 'utf-8');
+        const parsed = parseNote(content);
+        if (!parsed.body.trim()) continue;
+        const ghost = checkGhostNote(parsed.body);
+        if (ghost.isGhost) continue;
+
+        const rel = path.relative(currentConfig.vaultPath, filePath).replace(/\\/g, '/');
+        const folderRel = path.dirname(rel).replace(/\\/g, '/');
+        const currentFolder = folderRel === '.' ? '' : folderRel;
+        const filename = path.basename(filePath);
+        const title = String(parsed.data.title || path.basename(filePath, '.md'));
+        const fmTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+        const inlineTags = extractTags(
+          parsed.hadFrontmatter ? serializeNote(parsed.data, '') : '',
+          parsed.body,
+          filename
+        );
+        clusterableNotes.push({
+          path: rel,
+          filename,
+          title,
+          body: parsed.body,
+          folder: currentFolder,
+          tags: Array.from(new Set([...fmTags, ...inlineTags]))
+        });
+      } catch {}
+    }
+
+    const clusterResult = buildSemanticKnowledgeClusters({
+      notes: clusterableNotes,
+      projectProfiles: taxonomyCfg.projectProfiles,
+      discoveredProjects: projects,
+      axes: taxonomyCfg.axes,
+      tagRoutes: taxonomyCfg.tagRoutes,
+      projectsRoot
+    });
+
+    const targetClusters = clusterId
+      ? clusterResult.clusters.filter(c => c.id === clusterId)
+      : clusterResult.clusters;
+
+    if (targetClusters.length === 0) {
+      return res.status(404).json({ error: 'Target semantic cluster not found' });
+    }
+
+    const snapshot = createSnapshotSession(
+      currentConfig.vaultPath,
+      `semantic_clusters_${new Date().toISOString().replace(/[:.]/g, '-')}`
+    );
+
+    const customCleanTags = Array.isArray(extraTags)
+      ? extraTags.map((t: any) => normalizeToCanonicalTag(String(t))).filter(Boolean)
+      : [];
+
+    let updatedCount = 0;
+    let movedCount = 0;
+    const affectedDirs = new Set<string>();
+
+    for (const cluster of targetClusters) {
+      for (const member of cluster.notes) {
+        const fullPath = path.join(currentConfig.vaultPath, member.path);
+        if (!isPathInsideVault(fullPath, currentConfig.vaultPath, false) || !fs.existsSync(fullPath)) continue;
+
+        try {
+          const rawContent = await fsPromises.readFile(fullPath, 'utf-8');
+          const parsed = parseNote(rawContent);
+          await snapshot.backup(fullPath);
+
+          const finalTags = ensureLanguageTags(
+            sanitizeTagList([...member.suggestedTags, ...customCleanTags], { allowSingleLetter: false }),
+            parsed.body,
+            member.filename
+          );
+          parsed.data.tags = finalTags;
+          if (cluster.dominantProject) {
+            parsed.data.project = `[[${cluster.dominantProject}]]`;
+          }
+
+          const cleanTarget = String(overrideFolder || cluster.recommendedFolder || member.recommendedFolder || '')
+            .replace(/\\/g, '/')
+            .replace(/^\/+|\/+$/g, '');
+          if (cleanTarget) {
+            parsed.data.category = cleanTarget;
+          }
+          parsed.data.ai_refined = true;
+
+          await fsPromises.writeFile(fullPath, serializeNote(parsed.data, parsed.body), 'utf-8');
+          updatedCount++;
+
+          const currentFolderNorm = (member.currentFolder === 'Root' ? '' : member.currentFolder)
+            .replace(/\\/g, '/')
+            .replace(/^\/+|\/+$/g, '')
+            .toLowerCase();
+
+          if (routeFiles && cleanTarget && cleanTarget.toLowerCase() !== currentFolderNorm) {
+            const destDir = path.join(currentConfig.vaultPath, cleanTarget);
+            if (isPathInsideVault(destDir, currentConfig.vaultPath)) {
+              await fsPromises.mkdir(destDir, { recursive: true });
+              let destPath = path.join(destDir, member.filename);
+              let counter = 1;
+              while (fs.existsSync(destPath) && path.resolve(destPath) !== path.resolve(fullPath)) {
+                const ext = path.extname(member.filename);
+                const base = path.basename(member.filename, ext);
+                destPath = path.join(destDir, `${base} ${counter}${ext}`);
+                counter++;
+              }
+              if (path.resolve(fullPath) !== path.resolve(destPath)) {
+                affectedDirs.add(path.dirname(fullPath));
+                await snapshot.recordMove?.(fullPath, destPath);
+                await fsPromises.rename(fullPath, destPath);
+                triageManager.syncRefinedFile(fullPath, destPath, cleanTarget, path.basename(destPath));
+                movedCount++;
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    for (const dir of affectedDirs) {
+      try {
+        await pruneEmptyParentDirs(currentConfig.vaultPath, dir);
+      } catch {}
+    }
+
+    addLog(
+      `[Semantic Clusters Applied] Updated #tags on ${updatedCount} note(s) and routed ${movedCount} note(s) across ${targetClusters.length} semantic cluster(s).`,
+      'success'
+    );
+
+    res.json({
+      success: true,
+      updatedCount,
+      movedCount,
+      clustersApplied: targetClusters.length,
+      snapshotId: snapshot.sessionId,
+      message: `Applied clean #tags to ${updatedCount} document(s) and organized ${movedCount} file(s) into their semantic cluster folders.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vault/create-demo', async (_req, res) => {
+  try {
+    const demoVaultPath = path.join(process.cwd(), 'demo_obsidian_vault');
+    const paraFolders = [
+      '00_Inbox',
+      '00_MOC',
+      '01_Projects/Hermes',
+      '01_Projects/Neuromicon',
+      '01_Projects/UUCPFF',
+      '01_Projects/Obsidian-LLM-Pipeline',
+      '02_Areas/Business',
+      '03_Knowledge/Research',
+      '03_Knowledge/Technical',
+      '03_Knowledge/Essays',
+      '03_Knowledge/Scripts',
+      '04_Journal',
+      '05_Ideas',
+      '06_Archive',
+      '99_System'
+    ];
+
+    for (const folder of paraFolders) {
+      await fsPromises.mkdir(path.join(demoVaultPath, folder), { recursive: true });
+    }
+
+    const sampleNotes: Array<{ relPath: string; content: string }> = [
+      {
+        relPath: '00_Inbox/hermes_multi_agent_memory_routing.md',
+        content: `---\ntitle: "Hermes Multi-Agent Memory and Free API Routing"\ntags:\n  - Hermes\n  - agent-orchestration\n  - multi-agent\n---\n# Hermes Multi-Agent Memory and Free API Routing\n\nArchitecture specification for #Hermes covering #memory, #routing, and #local-LLM execution across autonomous agents.\n`
+      },
+      {
+        relPath: '00_Inbox/tuesday_architecture_sync_notes.md',
+        content: `---\ntitle: "Заметки со вторничного созвона по архитектуре"\ntags:\n  - meeting\n---\n# Заметки со вторничного созвона по архитектуре\n\nОбсудили оркестрацию автономных мультиагентов в системе Гермес, долговременную эпизодическую память агентов, локальный роутинг запросов через бесплатные API и управление контекстным окном LLM.\n`
+      },
+      {
+        relPath: '00_Inbox/world_1149_protocol_contact_arg.md',
+        content: `---\ntitle: "World 1149: Protocol Contact & Defragmentation Scenario"\ntags:\n  - Neuromicon\n  - World-1149\n  - Protocol-Contact\n---\n# World 1149: Protocol Contact & Defragmentation Scenario\n\nTransmedia narrative design for #Neuromicon exploring #Defragmentation, #24+1, and #E=M×C².\n`
+      },
+      {
+        relPath: '00_Inbox/episode_draft_fragment_04.md',
+        content: `---\ntitle: "Черновик драматургии четвёртого эпизода"\ntags:\n  - scenario\n---\n# Черновик драматургии четвёртого эпизода\n\nРазвитие трансмедиа сюжета в мире 1149: активация Протокола Контакт и дефрагментация сознания героев через квест в реальности.\n`
+      },
+      {
+        relPath: '00_Inbox/uucpff_festival_curation_network.md',
+        content: `---\ntitle: "UUCPFF Film Submission & Creator Distribution Pipeline"\ntags:\n  - UUCPFF\n  - film-festival\n  - curation\n---\n# UUCPFF Film Submission & Creator Distribution Pipeline\n\nOperational workflow for #UUCPFF covering #creator-network, #film-submission, and #distribution.\n`
+      },
+      {
+        relPath: '00_Inbox/semantic_hypergraph_quantization_hypothesis.md',
+        content: `---\ntitle: "3-Uniform Semantic Hypergraph & Logprob Quantization"\ntags:\n  - research\n  - semantic-hypergraph\n  - hypothesis\n---\n# 3-Uniform Semantic Hypergraph & Logprob Quantization\n\nResearch model on #semantic-hypergraph and #hypergraph using local Jev logprob primitives (#validation, #P1).\n`
+      },
+      {
+        relPath: '00_Inbox/obsidian_tag_taxonomy_pipeline_spec.md',
+        content: `---\ntitle: "Clean Atomic Tag Taxonomy & Semantic Document Clustering"\ntags:\n  - Obsidian-LLM-Pipeline\n  - tagging\n  - file-routing\n---\n# Clean Atomic Tag Taxonomy & Semantic Document Clustering\n\nTechnical specification for #Obsidian-LLM-Pipeline implementing #classification, #tagging, #semantic-ingestion, and #file-routing.\n`
+      }
+    ];
+
+    for (const note of sampleNotes) {
+      const targetFile = path.join(demoVaultPath, note.relPath);
+      await fsPromises.writeFile(targetFile, note.content, 'utf-8');
+    }
+
+    currentConfig.vaultPath = demoVaultPath;
+    await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(currentConfig, null, 2), 'utf-8');
+    await bootstrapProjectsYaml(demoVaultPath);
+
+    addLog(`[Demo Vault Ready] Initialized sample Obsidian Vault at "${demoVaultPath}" with 7 sample notes in 00_Inbox.`, 'success');
+    res.json({
+      success: true,
+      vaultPath: demoVaultPath,
+      config: currentConfig,
+      message: `Sample Obsidian Vault connected at "${demoVaultPath}" with 7 notes ready for Semantic Clustering & Tag Routing.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/vault/note/refine-single', async (req, res) => {
   if (!currentConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });
   const { path: relPath, smartRename } = req.body || {};
@@ -4371,16 +4713,135 @@ app.post('/api/vault/note/refine-single', async (req, res) => {
   }
 
   try {
-    const snapshot = createSnapshotSession(currentConfig.vaultPath);
-    await refineFile(fullPath, {
-      dryRun: false,
-      snapshot,
-      smartRename: smartRename !== false
-    });
+    const snapshot = createSnapshotSession(
+      currentConfig.vaultPath,
+      `single_sort_${new Date().toISOString().replace(/[:.]/g, '-')}`
+    );
+
+    // Check if Primary LLM is reachable; if online, run full refineFile; if offline or file remains unmoved, also apply deterministic L0-L7 Tag & Project Router
+    let llmReachable = false;
+    try {
+      const status = await llamaManager.getStatus({
+        primaryUrl: currentConfig.llamaUrl,
+        jevUrl: currentConfig.decisionModelUrl,
+        configuredPrimaryModel: currentConfig.primaryModelFile,
+        configuredJevModel: currentConfig.jevModelFile
+      });
+      llmReachable = status.primary.status === 'running';
+    } catch {}
+
+    if (llmReachable && fs.existsSync(fullPath)) {
+      await refineFile(fullPath, {
+        dryRun: false,
+        snapshot,
+        smartRename: smartRename !== false
+      });
+    }
+
+    // If the file still exists at fullPath (e.g. LLM was offline or kept it in place), run deterministic Tag & Project Classification + Directory Routing
+    let finalRelPath = relPath.replace(/\\/g, '/');
+    let movedToFolder: string | null = null;
+    let matchedProject: string | null = null;
+
+    if (fs.existsSync(fullPath)) {
+      await snapshot.backup(fullPath);
+      const rawContent = await fsPromises.readFile(fullPath, 'utf-8');
+      const parsed = parseNote(rawContent);
+      const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+      const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+      const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+
+      const folderRel = path.dirname(relPath).replace(/\\/g, '/');
+      const currentFolder = folderRel === '.' ? '' : folderRel;
+      const filename = path.basename(fullPath);
+      const noteTitle = String(parsed.data.title || path.basename(fullPath, '.md'));
+      const existingTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+
+      const projInf = inferProjectFromNoteAndTaxonomy({
+        filename,
+        title: noteTitle,
+        body: parsed.body,
+        existingTags,
+        folder: currentFolder,
+        discoveredProjects: projects,
+        projectProfiles: taxonomyCfg.projectProfiles,
+        projectsRoot
+      });
+
+      const curatedTags = ensureLanguageTags(
+        curateOrthogonalTags({
+          rawTags: existingTags,
+          title: noteTitle,
+          filename,
+          body: parsed.body,
+          folder: currentFolder,
+          discoveredProjects: projects,
+          projectProfiles: taxonomyCfg.projectProfiles,
+          customAxes: taxonomyCfg.axes,
+          replaceExisting: true,
+          maxTags: 9
+        }),
+        parsed.body,
+        filename
+      );
+
+      const routeDec = resolveDirectoryFromTags({
+        tags: curatedTags,
+        projectProfiles: taxonomyCfg.projectProfiles,
+        discoveredProjects: projects,
+        tagRoutes: taxonomyCfg.tagRoutes,
+        projectsRoot,
+        fallbackFolder: currentFolder || '03_Knowledge/Essays'
+      });
+
+      matchedProject = projInf.matchedProfile?.id || routeDec.matchedProjectId || null;
+      parsed.data.tags = curatedTags;
+      if (matchedProject) {
+        parsed.data.project = `[[${matchedProject}]]`;
+      }
+
+      const cleanTarget = routeDec.targetFolder.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+      if (cleanTarget) {
+        parsed.data.category = cleanTarget;
+      }
+      parsed.data.ai_refined = true;
+
+      await fsPromises.writeFile(fullPath, serializeNote(parsed.data, parsed.body), 'utf-8');
+
+      if (cleanTarget && cleanTarget.toLowerCase() !== currentFolder.toLowerCase()) {
+        const destDir = path.join(currentConfig.vaultPath, cleanTarget);
+        if (isPathInsideVault(destDir, currentConfig.vaultPath)) {
+          await fsPromises.mkdir(destDir, { recursive: true });
+          let destPath = path.join(destDir, filename);
+          let counter = 1;
+          while (fs.existsSync(destPath) && path.resolve(destPath) !== path.resolve(fullPath)) {
+            const ext = path.extname(filename);
+            const base = path.basename(filename, ext);
+            destPath = path.join(destDir, `${base} ${counter}${ext}`);
+            counter++;
+          }
+          if (path.resolve(fullPath) !== path.resolve(destPath)) {
+            const oldDir = path.dirname(fullPath);
+            await snapshot.recordMove?.(fullPath, destPath);
+            await fsPromises.rename(fullPath, destPath);
+            await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
+            finalRelPath = path.relative(currentConfig.vaultPath, destPath).replace(/\\/g, '/');
+            movedToFolder = cleanTarget;
+            triageManager.syncRefinedFile(fullPath, destPath, cleanTarget, path.basename(destPath));
+          }
+        }
+      }
+    }
+
     res.json({
       success: true,
       snapshotId: snapshot.sessionId,
-      message: `Заметка "${relPath}" классифицирована через связку Jev + LLM.`
+      newRelativePath: finalRelPath,
+      movedToFolder,
+      matchedProject,
+      message: movedToFolder
+        ? `Sorted "${path.basename(relPath)}" -> "${movedToFolder}"${matchedProject ? ` (Project: ${matchedProject})` : ''}.`
+        : `Updated L0–L7 tags and classification for "${finalRelPath}".`
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -4425,15 +4886,15 @@ app.post('/api/models/test-tandem', async (req, res) => {
       configuredJevModel: currentConfig.jevModelFile
     });
 
-    const sampleText = 'Техническое задание и системная архитектура локального ИИ-ассистента для управления базой знаний.';
+    const sampleText = 'Technical specification and system architecture of the local AI assistant for knowledge base management.';
     let jevCheck: any = { online: serverStatus.jev.status === 'running', model: serverStatus.jev.modelFilename };
     if (jevCheck.online) {
       try {
         const routerConfig = await buildRouterConfig(currentConfig);
         const routeRes = await routeHierarchical(
           sampleText,
-          'ТЗ_Локальный_Ассистент.md',
-          'ТЗ Локальный Ассистент',
+          'Tech_Spec_Local_Assistant.md',
+          'Tech Spec Local Assistant',
           routerConfig,
           { timeoutMs: 6000 }
         );
@@ -4455,7 +4916,7 @@ app.post('/api/models/test-tandem', async (req, res) => {
         const resp = await axios.post(
           `${currentConfig.llamaUrl.replace(/\/+$/, '')}/v1/chat/completions`,
           {
-            messages: [{ role: 'user', content: 'Ответь одним словом: Готов' }],
+            messages: [{ role: 'user', content: 'Reply with one word: Ready' }],
             max_tokens: 10,
             temperature: 0.1
           },

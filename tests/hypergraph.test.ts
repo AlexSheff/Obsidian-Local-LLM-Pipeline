@@ -280,7 +280,7 @@ title: "Нейронные Модели"
       const dna = new DnaEngine(testVault);
       await dna.load();
 
-      // Seed an active edge between cleannet and сенсоры
+      // Seed an active edge between cleannet and sensors
       const seedEdge = {
         id: computeHyperedgeId(['cleannet', 'сенсоры', 'связано-с']),
         triple: ['cleannet', 'сенсоры', 'связано-с'] as [string, string, string],
@@ -295,7 +295,7 @@ title: "Нейронные Модели"
       };
       dna.upsertEdge(seedEdge);
 
-      // Seed an active edge between сенсоры and вода
+      // Seed an active edge between sensors and water
       const seedEdge2 = {
         id: computeHyperedgeId(['сенсоры', 'вода', 'связано-с']),
         triple: ['сенсоры', 'вода', 'связано-с'] as [string, string, string],
@@ -312,7 +312,7 @@ title: "Нейронные Модели"
 
       const oracle = new OracleEngine(testVault, dna, registry, { oracleMin: 0.5 });
 
-      // Mock Choice selecting 'вода' with probability 0.75
+      // Mock Choice selecting candidate token with probability 0.75
       vi.spyOn(decisionModelModule, 'decide').mockResolvedValueOnce({
         chosen: { letter: 'A', option: 'вода', probability: 0.75 },
         confidence: 0.75,

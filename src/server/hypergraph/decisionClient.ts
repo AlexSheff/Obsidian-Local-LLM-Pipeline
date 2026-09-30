@@ -28,7 +28,7 @@ function estimateTokens(text: string): number {
 }
 
 /**
- * Noul primitive: returns probability of 'Yes'/'Да' in [0, 1].
+ * Noul primitive: returns probability of affirmative choice in [0, 1].
  * Used for hybridization: can tokens a and b form a logical relation?
  */
 export async function noul(
@@ -38,8 +38,8 @@ export async function noul(
 ): Promise<number> {
   const url = opts?.endpointUrl || 'http://127.0.0.1:1234';
   const timeout = opts?.timeoutMs || 15000;
-  const isRu = /[а-яё]/i.test(question + ' ' + state);
-  const options = isRu ? ['Да', 'Нет'] : ['Yes', 'No'];
+  const isRu = /[\u0430-\u044f\u0451]/i.test(question + ' ' + state);
+  const options = isRu ? ['\u0414\u0430', '\u041d\u0435\u0442'] : ['Yes', 'No'];
 
   const startTime = Date.now();
   const output: DecisionOutput = await sharedDecisionLimiter.execute(() =>
