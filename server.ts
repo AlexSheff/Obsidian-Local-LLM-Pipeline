@@ -114,25 +114,51 @@ const turndownService = new TurndownService({ headingStyle: 'atx' });
 // Aggressively remove unwanted elements that clutter the LLM context
 turndownService.remove(['style', 'script', 'noscript', 'meta', 'head', 'link']);
 
-// Global Crash Prevention: Catch all uncaught exceptions and rejections so process never dies silently
-process.on('uncaughtException', (err: any) => {
+// Global Crash Prevention & Controlled Shutdown
+let runningHttpServer: any = null;
+
+function handleFatalCrash(err: any, type: string) {
   try {
-    const errorDetails = `[CRITICAL UNCAUGHT EXCEPTION] ${new Date().toISOString()}: ${err?.stack || err}\n`;
+    const errorDetails = `[CRITICAL ${type}] ${new Date().toISOString()}: ${err?.stack || err}\n`;
     console.error(errorDetails);
     try {
       fs.appendFileSync(path.join(process.cwd(), 'emergency_crash_log.txt'), errorDetails, 'utf-8');
     } catch {}
-  } catch {}
+
+    isShuttingDown = true;
+    if (watcher) {
+      watcher.close().catch(() => {});
+    }
+    if (runningHttpServer) {
+      try {
+        runningHttpServer.close();
+      } catch {}
+    }
+    try {
+      const qPath = getQueueJournalPath();
+      if (qPath) {
+        fs.writeFileSync(qPath, JSON.stringify(fileQueue, null, 2), 'utf-8');
+      }
+    } catch {}
+
+    if (!process.env.VITEST) {
+      setTimeout(() => {
+        process.exit(1);
+      }, 500);
+    }
+  } catch {
+    if (!process.env.VITEST) {
+      process.exit(1);
+    }
+  }
+}
+
+process.on('uncaughtException', (err: any) => {
+  handleFatalCrash(err, 'UNCAUGHT EXCEPTION');
 });
 
 process.on('unhandledRejection', (reason: any) => {
-  try {
-    const errorDetails = `[UNHANDLED PROMISE REJECTION] ${new Date().toISOString()}: ${reason?.stack || reason}\n`;
-    console.error(errorDetails);
-    try {
-      fs.appendFileSync(path.join(process.cwd(), 'emergency_crash_log.txt'), errorDetails, 'utf-8');
-    } catch {}
-  } catch {}
+  handleFatalCrash(reason, 'UNHANDLED PROMISE REJECTION');
 });
 
 export const app = express();
@@ -326,10 +352,12 @@ export function getDecisionTriageQueueForTest() {
   return decisionTriageQueue;
 }
 
-// --- Queue System with Exponential Backoff ---
+// --- Queue System with Persistent State & Crash Recovery ---
 interface QueueItem {
   filePath: string;
   retryCount: number;
+  addedAt?: string;
+  nextRetryAt?: number;
 }
 const MAX_RETRIES = 3;
 const MAX_QUEUE_SIZE = 1000;
@@ -346,45 +374,137 @@ const fileQueue: QueueItem[] = [];
 let isProcessingQueue = false;
 let isShuttingDown = false;
 let activeTasks = 0;
+let queueTimer: NodeJS.Timeout | null = null;
+
+function getQueueJournalPath(): string | null {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) return null;
+  return path.join(currentConfig.vaultPath, '99_System', '_queue_state.json');
+}
+
+async function persistQueueState(): Promise<void> {
+  const qPath = getQueueJournalPath();
+  if (!qPath) return;
+  try {
+    const dir = path.dirname(qPath);
+    await fsPromises.mkdir(dir, { recursive: true });
+    const tmp = `${qPath}.tmp.${Date.now()}`;
+    await fsPromises.writeFile(tmp, JSON.stringify(fileQueue, null, 2), 'utf-8');
+    await fsPromises.rename(tmp, qPath);
+  } catch {}
+}
+
+export async function recoverQueueState(): Promise<number> {
+  const qPath = getQueueJournalPath();
+  if (!qPath || !fs.existsSync(qPath)) return 0;
+  try {
+    const raw = await fsPromises.readFile(qPath, 'utf-8');
+    const items = JSON.parse(raw);
+    if (Array.isArray(items)) {
+      let recovered = 0;
+      for (const item of items) {
+        if (item?.filePath && fs.existsSync(item.filePath)) {
+          if (!fileQueue.some(q => q.filePath === item.filePath)) {
+            fileQueue.push({
+              filePath: item.filePath,
+              retryCount: item.retryCount || 0,
+              addedAt: item.addedAt || new Date().toISOString(),
+              nextRetryAt: item.nextRetryAt
+            });
+            recovered++;
+          }
+        }
+      }
+      if (recovered > 0) {
+        addLog(`[Crash Recovery] Recovered ${recovered} pending file(s) from persistent queue journal.`, 'info');
+        processQueue().catch(() => {});
+      }
+      return recovered;
+    }
+  } catch {}
+  return 0;
+}
 
 async function processQueue() {
   if (isProcessingQueue || isShuttingDown) return;
   isProcessingQueue = true;
-  
-  while (fileQueue.length > 0 && !isShuttingDown) {
-    const item = fileQueue.shift();
-    if (!item) continue;
-    
-    // Check if file still exists before processing (might be deleted/moved manually)
-    try {
-       await fsPromises.access(item.filePath);
-    } catch {
-       continue; 
-    }
-    
-    activeTasks++;
-    try {
-      await processFile(item.filePath);
-    } catch (err: any) {
-      addLog(`Error processing ${path.basename(item.filePath)}: ${err.message}`, 'error');
-      
-      const isRetriable = err.isRetriable !== false;
-      
-      if (isRetriable && item.retryCount < MAX_RETRIES) {
-        addLog(`Re-queueing ${path.basename(item.filePath)} (Retry ${item.retryCount + 1}/${MAX_RETRIES})`, 'info');
-        // Exponential backoff pushing to queue asynchronously so it doesn't block the rest
-        setTimeout(() => {
-            fileQueue.push({ filePath: item.filePath, retryCount: item.retryCount + 1 });
-            processQueue(); // trigger if idle
-        }, Math.pow(2, item.retryCount) * 2000);
-      } else {
-        addLog(`Abandoned ${path.basename(item.filePath)}.`, 'error');
+
+  if (queueTimer) {
+    clearTimeout(queueTimer);
+    queueTimer = null;
+  }
+
+  try {
+    while (!isShuttingDown && fileQueue.length > 0) {
+      const now = Date.now();
+      const readyIndex = fileQueue.findIndex(q => !q.nextRetryAt || q.nextRetryAt <= now);
+      if (readyIndex === -1) {
+        // No item is ready right now; find earliest nextRetryAt
+        const upcoming = fileQueue.filter(q => q.nextRetryAt && q.nextRetryAt > now);
+        if (upcoming.length > 0) {
+          const minDelay = Math.min(...upcoming.map(q => (q.nextRetryAt || now) - now));
+          const delay = Math.max(100, Math.min(minDelay, 30000));
+          queueTimer = setTimeout(() => {
+            if (!isShuttingDown) processQueue().catch(() => {});
+          }, delay);
+        }
+        break;
+      }
+
+      const item = fileQueue[readyIndex];
+
+      // Check if file still exists before processing (might be deleted/moved manually)
+      try {
+        await fsPromises.access(item.filePath);
+      } catch {
+        fileQueue.splice(readyIndex, 1);
+        await persistQueueState();
+        continue;
+      }
+
+      activeTasks++;
+      try {
+        await processFile(item.filePath);
+        // On success: remove from queue and persist
+        const idx = fileQueue.indexOf(item);
+        if (idx !== -1) {
+          fileQueue.splice(idx, 1);
+        }
+        await persistQueueState();
+      } catch (err: any) {
+        addLog(`Error processing ${path.basename(item.filePath)}: ${err.message}`, 'error');
+
+        const isRetriable = err.isRetriable !== false;
+
+        if (isRetriable && item.retryCount < MAX_RETRIES) {
+          item.retryCount += 1;
+          const backoffMs = Math.pow(2, item.retryCount - 1) * 2000;
+          item.nextRetryAt = Date.now() + backoffMs;
+          addLog(
+            `Re-queueing ${path.basename(item.filePath)} (Retry ${item.retryCount}/${MAX_RETRIES} in ${backoffMs / 1000}s)`,
+            'info'
+          );
+          await persistQueueState();
+          if (!queueTimer) {
+            queueTimer = setTimeout(() => {
+              if (!isShuttingDown) processQueue().catch(() => {});
+            }, backoffMs);
+          }
+        } else {
+          addLog(`Abandoned ${path.basename(item.filePath)} after ${item.retryCount} attempts.`, 'error');
+          const idx = fileQueue.indexOf(item);
+          if (idx !== -1) {
+            fileQueue.splice(idx, 1);
+          }
+          await persistQueueState();
+        }
+      } finally {
+        activeTasks--;
       }
     }
-    activeTasks--;
+  } finally {
+    isProcessingQueue = false;
+    await persistQueueState();
   }
-  
-  isProcessingQueue = false;
 }
 
 // --- Duplicate Detection & Content Normalization Helpers ---
@@ -461,31 +581,29 @@ async function safeArchiveDuplicate(duplicatePath: string, canonicalPath: string
 async function getExistingFolders(dir: string, currentPath: string = '', depth: number = 0, folderList: string[] = []) {
   if (depth >= 2) return folderList; // Limit depth to avoid massive lists
   try {
-    const files = await fsPromises.readdir(dir);
-    for (const file of files) {
-      const lowerFile = file.toLowerCase();
+    const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const lowerName = ent.name.toLowerCase();
       // Strict ignore for MOC and system folders
       if (
-        file.startsWith('.') || 
-        lowerFile === '00_inbox' || 
-        lowerFile === 'templates' || 
-        lowerFile === '99_system' || 
-        lowerFile === 'moc' ||
-        lowerFile.startsWith('moc_') ||
-        lowerFile.startsWith('moc-') ||
-        lowerFile.startsWith('moc ')
+        ent.name.startsWith('.') || 
+        lowerName === '00_inbox' || 
+        lowerName === 'templates' || 
+        lowerName === '99_system' || 
+        lowerName === 'moc' ||
+        lowerName.startsWith('moc_') ||
+        lowerName.startsWith('moc-') ||
+        lowerName.startsWith('moc ')
       ) continue;
       
-      const filePath = path.join(dir, file);
-      const stat = await fsPromises.stat(filePath);
-      if (stat.isDirectory()) {
-        const relPath = currentPath ? `${currentPath}/${file}` : file;
-        folderList.push(relPath);
-        await getExistingFolders(filePath, relPath, depth + 1, folderList);
-      }
+      const filePath = path.join(dir, ent.name);
+      const relPath = currentPath ? `${currentPath}/${ent.name}` : ent.name;
+      folderList.push(relPath);
+      await getExistingFolders(filePath, relPath, depth + 1, folderList);
     }
-  } catch (err) {
-    // Ignore read errors
+  } catch (err: any) {
+    addLog(`[Scan Warning] Unable to read directory "${path.basename(dir)}": ${err.message}`, 'warn');
   }
   return folderList;
 }
@@ -494,54 +612,72 @@ async function getFilesRecursively(
   dir: string,
   fileList: string[] = [],
   force: boolean = false,
-  isExplicitFolder: boolean = false
+  isExplicitFolder: boolean = false,
+  scanErrors?: string[]
 ) {
-  const files = await fsPromises.readdir(dir);
-  for (const file of files) {
-    const lowerFile = file.toLowerCase();
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = await fsPromises.readdir(dir, { withFileTypes: true });
+  } catch (err: any) {
+    const msg = `Failed reading directory "${path.basename(dir)}": ${err.message}`;
+    addLog(`[Scan Warning] ${msg}`, 'warn');
+    if (scanErrors) scanErrors.push(msg);
+    return fileList;
+  }
+
+  for (const ent of entries) {
+    const lowerName = ent.name.toLowerCase();
     // In root scan: skip inbox, templates, system, MOCs
     // In explicit folder scan: don't skip the folder user picked!
     if (!isExplicitFolder) {
       if (
-        file.startsWith('.') || 
-        lowerFile === '00_inbox' || 
-        lowerFile === 'templates' || 
-        lowerFile === '99_system' || 
-        lowerFile === 'moc' ||
-        lowerFile.startsWith('moc_') ||
-        lowerFile.startsWith('moc-') ||
-        lowerFile.startsWith('moc ')
+        ent.name.startsWith('.') || 
+        lowerName === '00_inbox' || 
+        lowerName === 'templates' || 
+        lowerName === '99_system' || 
+        lowerName === 'moc' ||
+        lowerName.startsWith('moc_') ||
+        lowerName.startsWith('moc-') ||
+        lowerName.startsWith('moc ')
       ) continue;
     } else {
-      if (file.startsWith('.') || lowerFile === '99_system') continue;
+      if (ent.name.startsWith('.') || lowerName === '99_system') continue;
     }
 
-    const filePath = path.join(dir, file);
-    const stat = await fsPromises.stat(filePath);
-    if (stat.isDirectory()) {
-      await getFilesRecursively(filePath, fileList, force, false);
-    } else if (file.toLowerCase().endsWith('.md')) {
-      if (stat.size === 0) {
-        // Skip zero-byte empty markdown files from refine queue
-        continue;
-      }
-      if (force) {
-        fileList.push(filePath);
-      } else {
-        try {
-          // Fast read of the first 2048 bytes to check for the ai_refined flag
-          const fd = await fsPromises.open(filePath, 'r');
-          const buffer = Buffer.alloc(2048);
-          const { bytesRead } = await fd.read(buffer, 0, 2048, 0);
-          await fd.close();
-          const head = buffer.subarray(0, bytesRead).toString('utf-8');
-          if (!head.includes('ai_refined: true')) {
+    const filePath = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      await getFilesRecursively(filePath, fileList, force, false, scanErrors);
+    } else if (ent.isFile() && lowerName.endsWith('.md')) {
+      try {
+        const stat = await fsPromises.stat(filePath);
+        if (stat.size === 0) {
+          // Skip zero-byte empty markdown files from refine queue
+          continue;
+        }
+        if (force) {
+          fileList.push(filePath);
+        } else {
+          try {
+            // Fast read of the first 2048 bytes to check for the ai_refined flag
+            const fd = await fsPromises.open(filePath, 'r');
+            const buffer = Buffer.alloc(2048);
+            const { bytesRead } = await fd.read(buffer, 0, 2048, 0);
+            await fd.close();
+            const head = buffer.subarray(0, bytesRead).toString('utf-8');
+            if (!head.includes('ai_refined: true')) {
+              fileList.push(filePath);
+            }
+          } catch (readErr: any) {
+            // If header read fails, include for processing and record warning
+            const msg = `Failed reading header of "${ent.name}": ${readErr.message}`;
+            if (scanErrors) scanErrors.push(msg);
             fileList.push(filePath);
           }
-        } catch (err) {
-          // Fallback
-          fileList.push(filePath);
         }
+      } catch (statErr: any) {
+        const msg = `Unable to inspect note "${ent.name}": ${statErr.message}`;
+        addLog(`[Scan Warning] ${msg}`, 'warn');
+        if (scanErrors) scanErrors.push(msg);
       }
     }
   }
@@ -565,13 +701,15 @@ app.get('/api/refine-preview', async (req, res) => {
       return res.status(400).json({ error: `Folder "${folder}" does not exist in vault` });
     }
 
-    const files = await getFilesRecursively(targetDir, [], force, !isRoot);
+    const scanErrors: string[] = [];
+    const files = await getFilesRecursively(targetDir, [], force, !isRoot, scanErrors);
     const sample = files.slice(0, 5).map(f => path.relative(currentConfig.vaultPath, f).replace(/\\/g, '/'));
     res.json({
       count: files.length,
       sample,
       folder: folder || 'Entire Vault',
-      force
+      force,
+      scanErrors: scanErrors.length > 0 ? scanErrors : undefined
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1540,46 +1678,6 @@ export async function processFile(filePath: string) {
           );
         }
 
-        if (currentConfig.decisionMode === 'fast_routing' && routeResult.isHighConfidence) {
-          const targetDir = path.join(currentConfig.vaultPath, routeResult.suggestedFolder);
-          if (!isPathInsideVault(targetDir, currentConfig.vaultPath)) {
-            throw new Error(`Security Error: Target folder "${routeResult.suggestedFolder}" is outside vault.`);
-          }
-
-          addLog(
-            `[Jev Fast-Route] High confidence (${Math.round(routeResult.totalConfidence * 100)}%). Routing "${originalFilename}" directly to "${routeResult.suggestedFolder}" without generative LLM.`,
-            'success'
-          );
-
-          const fastTitle = sanitizeTitle(initialTitle, originalFilename);
-          const fastMdFilename = `${fastTitle}.md`;
-          const tagsWithLang = ensureLanguageTags(detectedTags, fullConvertedText, originalFilename);
-          const fastData: Record<string, unknown> = {
-            ...(parsedIncomingNote?.data || {}),
-            title: fastTitle,
-            category: routeResult.suggestedFolder,
-            tags: tagsWithLang,
-            ai_refined: true,
-            ai_processed: true,
-            ai_content_type: routeResult.level1Category
-          };
-          if (routeResult.projectLink) {
-            fastData.project = routeResult.projectLink;
-          }
-
-          await fsPromises.mkdir(targetDir, { recursive: true });
-          const destPath = path.join(targetDir, fastMdFilename);
-          if (!isPathInsideVault(destPath, currentConfig.vaultPath)) {
-            throw new Error(`Security Error: Destination path "${destPath}" is outside vault.`);
-          }
-          const finalFastContent = serializeNote(fastData, fullConvertedText);
-          await fsPromises.writeFile(destPath, finalFastContent, 'utf-8');
-          if (path.resolve(filePath) !== path.resolve(destPath)) {
-            await fsPromises.unlink(filePath).catch(() => null);
-          }
-          return;
-        }
-
         decisionGuidance = `\n### JEV-STYLE DECISION GUIDANCE (CALIBRATED GROUND TRUTH):\n- Detected Category: ${routeResult.level1Category} (${Math.round(routeResult.level1Confidence * 100)}% confidence)\n- Suggested Folder: ${routeResult.suggestedFolder} (${Math.round(routeResult.totalConfidence * 100)}% confidence)\n- Selection Detail: ${routeResult.level2Selection} (${Math.round(routeResult.level2Confidence * 100)}% confidence)${routeResult.projectLink ? `\n- Project Link: ${routeResult.projectLink} (Non-core project note: keep in genre folder '${routeResult.suggestedFolder}')` : ''}\nPrioritize placing this note into '${routeResult.suggestedFolder}'.`;
       } catch (decisionErr: any) {
         addLog(`Decision model check skipped on Inbox file: ${decisionErr.message}`, 'warn');
@@ -1587,21 +1685,50 @@ export async function processFile(filePath: string) {
     }
   }
 
-  addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
-
   const inboxProjectsList = await loadProjectsRegistry(currentConfig.vaultPath);
   const inboxProjectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
-  const inboxProjectsPromptLines =
-    inboxProjectsList.length > 0
-      ? inboxProjectsList.map(p => `     * ${p.aliases[0] || p.id} -> '${p.folder}'`).join('\n')
-      : `     * Named projects -> '${inboxProjectsRoot}/<ExactProjectName>'`;
 
-  // Degraded fallback mode without decision model: only pass folder list when decisionGuidance is empty
-  const existingFoldersContext = !decisionGuidance && currentVaultStructure.length > 0 
-    ? "\nEXISTING FOLDERS IN VAULT (Discovered dynamically from connected Vault):\n- " + currentVaultStructure.slice(0, 30).join("\n- ") 
-    : "";
+  let isFastRouted = false;
+  let data: z.infer<typeof ProcessInboxOutputSchema> | null = null;
 
-  const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using the connected vault's hierarchy.
+  if (inboxRouteResult && currentConfig.decisionMode === 'fast_routing' && inboxRouteResult.isHighConfidence) {
+    const targetDir = path.join(currentConfig.vaultPath, inboxRouteResult.suggestedFolder);
+    if (!isPathInsideVault(targetDir, currentConfig.vaultPath)) {
+      throw new Error(`Security Error: Target folder "${inboxRouteResult.suggestedFolder}" is outside vault.`);
+    }
+
+    addLog(
+      `[Jev Fast-Route] High confidence (${Math.round(inboxRouteResult.totalConfidence * 100)}%). Routing "${originalFilename}" directly to "${inboxRouteResult.suggestedFolder}" without generative LLM.`,
+      'success'
+    );
+
+    const initialTitle = (parsedIncomingNote?.data?.title as string) || originalFilename.replace(/\.[^/.]+$/, '');
+    const fastTitle = sanitizeTitle(initialTitle, originalFilename);
+    const tagsWithLang = ensureLanguageTags(detectedTags, fullConvertedText, originalFilename);
+    data = {
+      title: fastTitle,
+      summary: '',
+      category: inboxRouteResult.suggestedFolder,
+      tags: tagsWithLang,
+      related_concepts: []
+    };
+    isFastRouted = true;
+  }
+
+  if (!isFastRouted) {
+    addLog(`Sending to local LLM at ${currentConfig.llamaUrl}`);
+
+    const inboxProjectsPromptLines =
+      inboxProjectsList.length > 0
+        ? inboxProjectsList.map(p => `     * ${p.aliases[0] || p.id} -> '${p.folder}'`).join('\n')
+        : `     * Named projects -> '${inboxProjectsRoot}/<ExactProjectName>'`;
+
+    // Degraded fallback mode without decision model: only pass folder list when decisionGuidance is empty
+    const existingFoldersContext = !decisionGuidance && currentVaultStructure.length > 0 
+      ? "\nEXISTING FOLDERS IN VAULT (Discovered dynamically from connected Vault):\n- " + currentVaultStructure.slice(0, 30).join("\n- ") 
+      : "";
+
+    const prompt = `You are an expert semantic taxonomist organizing an Obsidian knowledge vault using the connected vault's hierarchy.
 Analyze this new incoming file from the Inbox and classify it with flawless precision.
 DO NOT output any markdown, explanations, or backticks. Return ONLY raw JSON.
 ${decisionGuidance}
@@ -1656,51 +1783,62 @@ Extract these exactly 5 fields in valid JSON format:
   "related_concepts": ["Concept 1", "Concept 2", "Concept 3"]
 }`;
 
-  const timeoutMs = (currentConfig.timeoutSeconds || 240) * 1000;
-  let data: z.infer<typeof ProcessInboxOutputSchema>;
+    const timeoutMs = (currentConfig.timeoutSeconds || 240) * 1000;
 
-  try {
-    data = await generateStructured({
-      endpointUrl: currentConfig.llamaUrl,
-      messages: [{ role: 'user', content: prompt }],
-      schema: ProcessInboxOutputSchema,
-      schemaName: 'process_inbox_schema',
-      timeoutMs,
-      temperature: 0.1,
-      maxTokens: 350
-    });
-  } catch (llmError: any) {
-    // C8: If LLM returned invalid JSON, empty output, or failed schema validation, quarantine to 00_Inbox/Review with review_reason
-    if (
-      llmError instanceof GenerationError &&
-      !llmError.reviewReason.startsWith('llm_network_error') &&
-      llmError.reviewReason !== 'llm_url_missing'
-    ) {
-      const reviewDir = path.join(currentConfig.vaultPath, '00_Inbox', 'Review');
-      await fsPromises.mkdir(reviewDir, { recursive: true });
-      const reviewTitle = sanitizeTitle(
-        (parsedIncomingNote?.data?.title as string) || originalFilename.replace(/\.[^/.]+$/, ''),
-        originalFilename
-      );
-      const reviewDestPath = path.join(reviewDir, `${reviewTitle}.md`);
-      const reviewData: Record<string, unknown> = {
-        ...(parsedIncomingNote?.data || {}),
-        title: reviewTitle,
-        review_reason: llmError.reviewReason,
-        ai_processed: false
-      };
-      const reviewContent = serializeNote(reviewData, fullConvertedText);
-      await fsPromises.writeFile(reviewDestPath, reviewContent, 'utf-8');
-      if (path.resolve(filePath) !== path.resolve(reviewDestPath)) {
-        await fsPromises.unlink(filePath).catch(() => null);
+    try {
+      data = await generateStructured({
+        endpointUrl: currentConfig.llamaUrl,
+        messages: [{ role: 'user', content: prompt }],
+        schema: ProcessInboxOutputSchema,
+        schemaName: 'process_inbox_schema',
+        timeoutMs,
+        temperature: 0.1,
+        maxTokens: 350
+      });
+    } catch (llmError: any) {
+      // C8: If LLM returned invalid JSON, empty output, or failed schema validation, quarantine to 00_Inbox/Review with review_reason
+      if (
+        llmError instanceof GenerationError &&
+        !llmError.reviewReason.startsWith('llm_network_error') &&
+        llmError.reviewReason !== 'llm_url_missing'
+      ) {
+        const reviewDir = path.join(currentConfig.vaultPath, '00_Inbox', 'Review');
+        await fsPromises.mkdir(reviewDir, { recursive: true });
+        const reviewTitle = sanitizeTitle(
+          (parsedIncomingNote?.data?.title as string) || originalFilename.replace(/\.[^/.]+$/, ''),
+          originalFilename
+        );
+        let reviewDestPath = path.join(reviewDir, `${reviewTitle}.md`);
+        let reviewCounter = 1;
+        while (fs.existsSync(reviewDestPath)) {
+          reviewDestPath = path.join(reviewDir, `${reviewTitle} ${reviewCounter}.md`);
+          reviewCounter++;
+        }
+        const reviewData: Record<string, unknown> = {
+          ...(parsedIncomingNote?.data || {}),
+          title: reviewTitle,
+          review_reason: llmError.reviewReason,
+          ai_processed: false
+        };
+        const reviewContent = serializeNote(reviewData, fullConvertedText);
+        const tmpReview = `${reviewDestPath}.tmp.${Date.now()}`;
+        await fsPromises.writeFile(tmpReview, reviewContent, 'utf-8');
+        await fsPromises.rename(tmpReview, reviewDestPath);
+        if (path.resolve(filePath) !== path.resolve(reviewDestPath)) {
+          await fsPromises.unlink(filePath).catch(() => null);
+        }
+        addLog(
+          `[Review Quarantine] Moved "${originalFilename}" to 00_Inbox/Review (review_reason: ${llmError.reviewReason})`,
+          'warn'
+        );
+        return;
       }
-      addLog(
-        `[Review Quarantine] Moved "${originalFilename}" to 00_Inbox/Review (review_reason: ${llmError.reviewReason})`,
-        'warn'
-      );
-      return;
+      throw llmError;
     }
-    throw llmError;
+  }
+
+  if (!data) {
+    throw new Error(`Failed to generate or route note data for ${originalFilename}`);
   }
   
   // Routing
@@ -1940,15 +2078,14 @@ Extract these exactly 5 fields in valid JSON format:
   // SERIALIZED REGISTRY UPDATE (Mutex + Avoiding full JSON.parse)
   const registryPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry.json');
   const unlock = await registryMutex.lock();
+  const newEntry = {
+    hash,
+    original_path: `00_Inbox/${relativePath}`,
+    destination: `${destFolder}/${mdFilename}`,
+    category: category,
+    processed_at: new Date().toISOString()
+  };
   try {
-    const newEntry = {
-      hash,
-      original_path: `00_Inbox/${relativePath}`,
-      destination: `${destFolder}/${mdFilename}`,
-      category: category,
-      processed_at: new Date().toISOString()
-    };
-    
     const entryStr = JSON.stringify(newEntry, null, 2);
     
     if (!fs.existsSync(registryPath)) {
@@ -1987,7 +2124,15 @@ Extract these exactly 5 fields in valid JSON format:
       }
     }
   } catch (err: any) {
-     addLog(`Failed to update registry efficiently: ${err.message}`, 'error');
+    addLog(`Failed to update registry efficiently: ${err.message}. Writing to fallback journal...`, 'warn');
+    try {
+      const journalPath = path.join(currentConfig.vaultPath, '99_System', '_processing_registry_journal.jsonl');
+      await fsPromises.appendFile(journalPath, `${JSON.stringify(newEntry)}\n`, 'utf-8');
+      addLog(`Safely appended entry to fallback registry journal: ${path.basename(journalPath)}`, 'info');
+    } catch (journalErr: any) {
+      addLog(`Critical: Failed to persist processing registry entry: ${journalErr.message}`, 'error');
+      throw new Error(`Data safety violation: failed to record processing registry entry: ${err.message}`);
+    }
   } finally {
     unlock();
   }
@@ -2117,13 +2262,19 @@ app.post('/api/start', async (req, res) => {
   watcher.on('add', (filePath) => {
     if (filePath.includes('/Review/') || filePath.includes('\\Review\\')) return;
     if (filePath.includes('/Processed/') || filePath.includes('\\Processed\\')) return;
-    
+
+    // Deduplication check: do not re-add if already queued
+    if (fileQueue.some(item => path.resolve(item.filePath) === path.resolve(filePath))) {
+      return;
+    }
+
     if (fileQueue.length >= MAX_QUEUE_SIZE) {
        addLog(`Queue is full! Dropping event for ${path.basename(filePath)}.`, 'error');
        return;
     }
-    
-    fileQueue.push({ filePath, retryCount: 0 });
+
+    fileQueue.push({ filePath, retryCount: 0, addedAt: new Date().toISOString() });
+    persistQueueState().catch(() => {});
     processQueue();
   });
 
@@ -5568,13 +5719,13 @@ async function startServer() {
     });
   }
 
-  const httpServer = app.listen(PORT, HOST, () => {
+  runningHttpServer = app.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
   });
   // Allow up to 5 minutes for large full-vault operations without dropping connection
-  httpServer.setTimeout(300000);
-  httpServer.keepAliveTimeout = 120000;
-  httpServer.headersTimeout = 125000;
+  runningHttpServer.setTimeout(300000);
+  runningHttpServer.keepAliveTimeout = 120000;
+  runningHttpServer.headersTimeout = 125000;
 }
 
 if (!process.env.VITEST) {

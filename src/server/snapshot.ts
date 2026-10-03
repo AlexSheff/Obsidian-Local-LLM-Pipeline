@@ -1,7 +1,16 @@
 import path from 'path';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
+import crypto from 'crypto';
 import { ensureObsidianIgnoreFilters, pruneOldSnapshots } from './vaultOptimizer';
+import { isPathInsideVault } from './validation';
+
+export interface SnapshotFileEntry {
+  relPath: string;
+  mtimeMs: number;
+  size: number;
+  sha256?: string;
+}
 
 export interface SnapshotSession {
   sessionId: string;
@@ -9,6 +18,18 @@ export interface SnapshotSession {
   backup(filePath: string): Promise<string | null>;
   recordMove?(fromFilePath: string, toFilePath: string): Promise<void>;
   backedUpCount(): number;
+  getManifest(): Record<string, SnapshotFileEntry>;
+}
+
+export interface RestoreResult {
+  restoredCount: number;
+  conflicts: Array<{ targetPath: string; conflictBackupPath: string }>;
+  errors: string[];
+}
+
+async function computeSha256(filePath: string): Promise<string> {
+  const content = await fsPromises.readFile(filePath);
+  return crypto.createHash('sha256').update(content).digest('hex');
 }
 
 /**
@@ -18,10 +39,10 @@ export interface SnapshotSession {
  * so Obsidian Desktop never slows down indexing accumulated backup files.
  */
 export function createSnapshotSession(vaultPath: string, customSessionId?: string): SnapshotSession {
-  // Use ISO timestamp with safe characters (replacing colons with hyphens)
   const sessionId = customSessionId || new Date().toISOString().replace(/:/g, '-');
   const backupDir = path.join(vaultPath, '99_System', '_refine_backup', sessionId);
   const backedUpFiles = new Set<string>();
+  const fileManifest: Record<string, SnapshotFileEntry> = {};
   const movedFiles: Array<{ fromRel: string; toRel: string }> = [];
   let maintenanceTriggered = false;
 
@@ -48,15 +69,46 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
         return null;
       }
 
-      const relPath = path.relative(resolvedVault, resolvedFile);
-      if (relPath.startsWith('..') || path.isAbsolute(relPath)) {
+      if (!isPathInsideVault(resolvedFile, resolvedVault)) {
         throw new Error(`Security error: ${filePath} is outside the vault`);
       }
 
+      const relPath = path.relative(resolvedVault, resolvedFile).replace(/\\/g, '/');
       const destBackupPath = path.join(backupDir, relPath);
       await fsPromises.mkdir(path.dirname(destBackupPath), { recursive: true });
-      await fsPromises.copyFile(resolvedFile, destBackupPath);
+
+      // Atomic copy
+      const tmpBackup = `${destBackupPath}.tmp.${Date.now()}`;
+      await fsPromises.copyFile(resolvedFile, tmpBackup);
+      await fsPromises.rename(tmpBackup, destBackupPath);
+
+      let stat: fs.Stats;
+      let sha256 = '';
+      try {
+        stat = await fsPromises.stat(resolvedFile);
+        sha256 = await computeSha256(resolvedFile);
+      } catch {
+        stat = { mtimeMs: Date.now(), size: 0 } as any;
+      }
+
+      fileManifest[relPath] = {
+        relPath,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        sha256
+      };
+
       backedUpFiles.add(resolvedFile);
+
+      // Persist manifest
+      try {
+        await fsPromises.writeFile(
+          path.join(backupDir, '_manifest.json'),
+          JSON.stringify(fileManifest, null, 2),
+          'utf-8'
+        );
+      } catch {}
+
       return destBackupPath;
     },
     async recordMove(fromFilePath: string, toFilePath: string): Promise<void> {
@@ -77,38 +129,81 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
     },
     backedUpCount() {
       return backedUpFiles.size;
+    },
+    getManifest() {
+      return { ...fileManifest };
     }
   };
 }
 
 /**
  * Restores all files from a backup snapshot session back to the vault.
+ * Includes conflict detection: if a destination file was modified after the snapshot,
+ * creates a conflict backup (.conflict.<timestamp>.bak) before restoring so newer edits are never destroyed.
  */
 export async function restoreSnapshotSession(
   vaultPath: string,
   sessionId: string
-): Promise<{ restoredCount: number; errors: string[] }> {
+): Promise<RestoreResult> {
   const backupDir = path.join(vaultPath, '99_System', '_refine_backup', sessionId);
   if (!fs.existsSync(backupDir)) {
     throw new Error(`Backup snapshot "${sessionId}" not found.`);
   }
 
   const errors: string[] = [];
+  const conflicts: Array<{ targetPath: string; conflictBackupPath: string }> = [];
   let restoredCount = 0;
+
+  // Load manifest if available
+  let manifest: Record<string, SnapshotFileEntry> = {};
+  const manifestPath = path.join(backupDir, '_manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      manifest = JSON.parse(await fsPromises.readFile(manifestPath, 'utf-8'));
+    } catch {}
+  }
 
   async function walkAndRestore(currentDir: string) {
     const entries = await fsPromises.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name === '_moved_manifest.json') continue;
+      if (entry.name === '_moved_manifest.json' || entry.name === '_manifest.json') continue;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         await walkAndRestore(fullPath);
       } else if (entry.isFile()) {
         try {
-          const relPath = path.relative(backupDir, fullPath);
+          const relPath = path.relative(backupDir, fullPath).replace(/\\/g, '/');
           const targetPath = path.join(vaultPath, relPath);
+
+          if (!isPathInsideVault(targetPath, vaultPath)) {
+            errors.push(`Security error: Target path "${targetPath}" is outside vault`);
+            continue;
+          }
+
+          // Conflict detection: If target file exists and content differs from snapshot
+          if (fs.existsSync(targetPath)) {
+            const currentHash = await computeSha256(targetPath).catch(() => '');
+            const backupHash = await computeSha256(fullPath).catch(() => '');
+            
+            // If contents differ, protect the existing file
+            if (currentHash && backupHash && currentHash !== backupHash) {
+              const currentStat = await fsPromises.stat(targetPath).catch(() => ({ mtimeMs: Date.now() }));
+              const recordedEntry = manifest[relPath];
+              const isDifferentFromSnapshot = recordedEntry?.sha256 ? currentHash !== recordedEntry.sha256 : true;
+
+              if (isDifferentFromSnapshot) {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                const conflictBackupPath = `${targetPath}.conflict.${ts}.bak`;
+                await fsPromises.copyFile(targetPath, conflictBackupPath);
+                conflicts.push({ targetPath, conflictBackupPath });
+              }
+            }
+          }
+
           await fsPromises.mkdir(path.dirname(targetPath), { recursive: true });
-          await fsPromises.copyFile(fullPath, targetPath);
+          const tmpRestorePath = `${targetPath}.tmp.${Date.now()}`;
+          await fsPromises.copyFile(fullPath, tmpRestorePath);
+          await fsPromises.rename(tmpRestorePath, targetPath);
           restoredCount++;
         } catch (e: any) {
           errors.push(`Failed restoring ${entry.name}: ${e.message}`);
@@ -120,16 +215,24 @@ export async function restoreSnapshotSession(
   await walkAndRestore(backupDir);
 
   // If files were moved to a different folder during the session, remove the moved copies
-  const manifestPath = path.join(backupDir, '_moved_manifest.json');
-  if (fs.existsSync(manifestPath)) {
+  const movedManifestPath = path.join(backupDir, '_moved_manifest.json');
+  if (fs.existsSync(movedManifestPath)) {
     try {
-      const moves = JSON.parse(await fsPromises.readFile(manifestPath, 'utf-8'));
+      const moves = JSON.parse(await fsPromises.readFile(movedManifestPath, 'utf-8'));
       if (Array.isArray(moves)) {
         for (const m of moves) {
           if (m?.toRel && m?.fromRel && m.toRel !== m.fromRel) {
             const movedAbs = path.join(vaultPath, m.toRel);
             const origAbs = path.join(vaultPath, m.fromRel);
             if (fs.existsSync(movedAbs) && fs.existsSync(origAbs)) {
+              const origHash = await computeSha256(origAbs).catch(() => '');
+              const movedHash = await computeSha256(movedAbs).catch(() => '');
+              if (origHash && movedHash && origHash !== movedHash) {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                const conflictBackupPath = `${movedAbs}.conflict.${ts}.bak`;
+                await fsPromises.copyFile(movedAbs, conflictBackupPath).catch(() => {});
+                conflicts.push({ targetPath: movedAbs, conflictBackupPath });
+              }
               await fsPromises.unlink(movedAbs).catch(() => {});
             }
           }
@@ -138,5 +241,5 @@ export async function restoreSnapshotSession(
     } catch {}
   }
 
-  return { restoredCount, errors };
+  return { restoredCount, conflicts, errors };
 }

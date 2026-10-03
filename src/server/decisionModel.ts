@@ -187,21 +187,60 @@ export function parseDecisionResponse(
   }
 
   // Fallback if logprobs were not requested or server doesn't support them
-  // Detect single letter from output
-  const matchedLetter = rawContent.charAt(0).toUpperCase();
-  const validLetter = optionLetters.includes(matchedLetter) ? matchedLetter : optionLetters[0];
-  const chosenIndex = validLetter.charCodeAt(0) - 65;
+  // Detect single option letter from output matching allowed options (handling prefixes like "Option B", "Answer: A", etc.)
+  const trimmed = rawContent.trim();
+  let matchedLetter = '';
 
+  const explicitMatch = trimmed.match(new RegExp(`(?:Option|Answer|Choice|Select)?\\s*[:=()\\s]*\\b([${optionLetters.join('')}])\\b`, 'i'));
+  if (explicitMatch) {
+    matchedLetter = explicitMatch[1].toUpperCase();
+  } else if (trimmed.length > 0 && optionLetters.includes(trimmed.charAt(0).toUpperCase())) {
+    matchedLetter = trimmed.charAt(0).toUpperCase();
+  }
+
+  const isValidOption = optionLetters.includes(matchedLetter);
+
+  if (isValidOption) {
+    const chosenIndex = matchedLetter.charCodeAt(0) - 65;
+    // Without logprobs, decision is uncalibrated: cap confidence at conservative 0.5
+    // Never assign 1.0 artificial confidence to uncalibrated decisions
+    const fallbackConfidence = 0.5;
+    const remainingProb = Math.max(0, 1.0 - fallbackConfidence);
+    const otherCount = Math.max(1, options.length - 1);
+    const uniformOther = Math.round((remainingProb / otherCount) * 1000) / 1000;
+
+    const decisions: DecisionResult[] = optionLetters.map((letter, idx) => ({
+      letter,
+      option: options[idx],
+      probability: letter === matchedLetter ? fallbackConfidence : uniformOther
+    }));
+
+    return {
+      decisions,
+      chosen: decisions[chosenIndex],
+      confidence: fallbackConfidence,
+      calibrated: false,
+      question: '',
+      optionsCount: options.length
+    };
+  }
+
+  // If model output is invalid or did not produce a recognized option letter:
+  // Never default to Option A and never assign artificial confidence!
   const decisions: DecisionResult[] = optionLetters.map((letter, idx) => ({
     letter,
     option: options[idx],
-    probability: letter === validLetter ? 1.0 : 0.0
+    probability: 0.0
   }));
 
   return {
     decisions,
-    chosen: decisions[chosenIndex],
-    confidence: 1.0,
+    chosen: {
+      letter: '?',
+      option: 'Invalid or Ambiguous Model Response',
+      probability: 0.0
+    },
+    confidence: 0.0,
     calibrated: false,
     question: '',
     optionsCount: options.length

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-local-llm-pipeline",
-  "version": "3.0.0",
+  "version": "5.3.0",
   "description": "An automated, Zero-Config, local intelligence pipeline for Obsidian using local LLMs.",
   "author": "",
   "license": "MIT",

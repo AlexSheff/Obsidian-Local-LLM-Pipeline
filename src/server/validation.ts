@@ -27,25 +27,86 @@ export function isInboxPathIgnored(inboxPath: string, testPath: string): boolean
 }
 
 /**
- * Checks if a target path is strictly inside the vault path (no path traversal).
+ * Checks if a target path is strictly inside the vault path (no path traversal, no symlink escape).
+ * Resolves canonical realpath on disk to guarantee symbolic links inside the vault cannot escape outside.
  * When allowRoot is true, the vault root itself is considered a valid target directory.
  */
 export function isPathInsideVault(targetPath: string, vaultPath: string, allowRoot: boolean = false): boolean {
   if (!vaultPath || !targetPath) return false;
   try {
     const resolvedVault = path.resolve(vaultPath);
+    let realVault = resolvedVault;
+    if (fs.existsSync(resolvedVault)) {
+      try {
+        realVault = fs.realpathSync(resolvedVault);
+      } catch {
+        realVault = resolvedVault;
+      }
+    }
+
     const resolvedTarget = path.isAbsolute(targetPath)
       ? path.resolve(targetPath)
-      : path.resolve(vaultPath, targetPath);
-    const rel = path.relative(resolvedVault, resolvedTarget);
-    // Must not start with '..' and must not be absolute
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      : path.resolve(resolvedVault, targetPath);
+
+    // 1. Lexical traversal check
+    const lexicalRel = path.relative(resolvedVault, resolvedTarget);
+    if (lexicalRel.startsWith('..') || path.isAbsolute(lexicalRel)) {
       return false;
     }
-    if (rel === '') {
+
+    // 2. Canonical filesystem realpath check (symlink escape prevention)
+    let realTarget: string;
+    if (fs.existsSync(resolvedTarget)) {
+      realTarget = fs.realpathSync(resolvedTarget);
+    } else {
+      // If target does not exist yet, find deepest existing ancestor directory
+      let ancestor = path.dirname(resolvedTarget);
+      const remainingSegments: string[] = [path.basename(resolvedTarget)];
+      while (ancestor && !fs.existsSync(ancestor) && ancestor !== path.dirname(ancestor)) {
+        remainingSegments.unshift(path.basename(ancestor));
+        ancestor = path.dirname(ancestor);
+      }
+
+      if (fs.existsSync(ancestor)) {
+        const realAncestor = fs.realpathSync(ancestor);
+        realTarget = path.resolve(realAncestor, ...remainingSegments);
+      } else {
+        realTarget = resolvedTarget;
+      }
+    }
+
+    const realRel = path.relative(realVault, realTarget);
+    if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+      return false;
+    }
+
+    if (realRel === '') {
       return allowRoot;
     }
+
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates that an endpoint URL is strictly a local offline address (127.0.0.1, localhost, [::1], 0.0.0.0).
+ * Prevents remote model calls and cloud telemetry leaks.
+ */
+export function isLocalEndpoint(urlStr: string | undefined): boolean {
+  if (!urlStr) return false;
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const hostname = u.hostname.toLowerCase();
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '[::1]'
+    );
   } catch {
     return false;
   }
@@ -107,16 +168,13 @@ export const ConfigSchema = z.object({
     }
   }, { message: 'vaultPath must be an existing absolute directory' }),
   llamaUrl: z.string().url().refine((val) => {
-    try {
-      const u = new URL(val);
-      return (u.protocol === 'http:' || u.protocol === 'https:') && !u.pathname.includes('..');
-    } catch {
-      return false;
-    }
-  }, { message: 'llamaUrl must be a valid http or https URL without path traversal' }),
+    return isLocalEndpoint(val);
+  }, { message: 'llamaUrl must be a local offline endpoint (e.g. http://127.0.0.1:8080 or http://localhost:8080)' }),
   timeoutSeconds: z.number().int().min(1).max(3600),
   maxContextChars: z.number().int().min(500).max(32000),
-  decisionModelUrl: z.string().url().optional().default('http://127.0.0.1:1234'),
+  decisionModelUrl: z.string().url().refine((val) => {
+    return !val || isLocalEndpoint(val);
+  }, { message: 'decisionModelUrl must be a local offline endpoint (e.g. http://127.0.0.1:1234)' }).optional().default('http://127.0.0.1:1234'),
   enableDecisionModel: z.boolean().optional().default(false),
   decisionConfidenceThreshold: z.number().min(0.1).max(1.0).optional().default(0.80),
   decisionMode: z.enum(['hybrid', 'fast_routing']).optional().default('hybrid'),
@@ -201,7 +259,9 @@ export const DecisionTestSchema = z.object({
   filename: z.string().optional().default('Note.md'),
   question: z.string().optional(),
   options: z.array(z.string().min(1)).min(2).max(26).optional(),
-  decisionModelUrl: z.string().url().optional(),
+  decisionModelUrl: z.string().url().refine((val) => {
+    return !val || isLocalEndpoint(val);
+  }, { message: 'decisionModelUrl must be a local offline endpoint' }).optional(),
 });
 
 export const DecisionTriageResolveSchema = z.object({

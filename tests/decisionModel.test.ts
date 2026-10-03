@@ -63,7 +63,7 @@ describe('Jev-Style Decision Model Module', () => {
       expect(result.decisions[1].option).toBe('Science/Technology');
     });
 
-    it('handles fallback single token without logprobs gracefully', () => {
+    it('handles fallback single token without logprobs gracefully and caps confidence', () => {
       const options = ['Option 1', 'Option 2', 'Option 3'];
       const mockResponse = {
         choices: [
@@ -77,7 +77,24 @@ describe('Jev-Style Decision Model Module', () => {
       expect(result.calibrated).toBe(false);
       expect(result.chosen.letter).toBe('B');
       expect(result.chosen.option).toBe('Option 2');
-      expect(result.confidence).toBe(1.0);
+      // Must not artificially claim 1.0 confidence when uncalibrated
+      expect(result.confidence).toBeLessThanOrEqual(0.5);
+    });
+
+    it('rejects invalid or ambiguous responses without defaulting to Option A with fake 100% confidence', () => {
+      const options = ['Option 1', 'Option 2', 'Option 3'];
+      const invalidMock = {
+        choices: [
+          {
+            message: { content: 'I cannot answer this question because it is unclear.' }
+          }
+        ]
+      };
+
+      const result = parseDecisionResponse(invalidMock, options);
+      expect(result.calibrated).toBe(false);
+      expect(result.chosen.letter).not.toBe('A');
+      expect(result.confidence).toBe(0.0);
     });
 
     it('throws error if choices are empty', () => {

@@ -9,11 +9,16 @@ import {
   isCalibrated,
   applyCalibrationGateOnLoad,
   loadConfigFromFile,
-  app
+  app,
+  recoverQueueState,
+  setCurrentConfigForTest
 } from '../server';
 import { auditDirectoryProject, applyRevisionPlan } from '../src/server/directoryRevisor';
+import { isPathInsideVault, isLocalEndpoint } from '../src/server/validation';
+import { parseDecisionResponse } from '../src/server/decisionModel';
+import { createSnapshotSession, restoreSnapshotSession } from '../src/server/snapshot';
 
-describe('Security & P0 Regression Suite (R1 - R8)', () => {
+describe('Security & P0 Regression Suite (R1 - R14)', () => {
   const tempRoot = path.join(process.cwd(), 'tests', '_temp_security_regressions');
   const testVault = path.join(tempRoot, 'vault');
   const outsideDir = path.join(tempRoot, 'outside');
@@ -247,5 +252,144 @@ describe('Security & P0 Regression Suite (R1 - R8)', () => {
     expect(allDeps['@types/html-to-text']).toBeUndefined();
     expect(allDeps['motion']).toBeUndefined();
     expect(pkg.scripts?.dev).toContain('NODE_ENV=development');
+  });
+
+  it('R9: isPathInsideVault rejects symbolic links escaping outside vault via canonical realpath', async () => {
+    const outsideFile = path.join(outsideDir, 'secret_passwords.txt');
+    await fsPromises.writeFile(outsideFile, 'confidential', 'utf-8');
+
+    // Create a symlink inside testVault pointing to outsideDir
+    const symlinkInsideVault = path.join(testVault, 'escape_link');
+    try {
+      await fsPromises.symlink(outsideDir, symlinkInsideVault, 'dir');
+    } catch {
+      // If symlink creation is not permitted by environment, skip symlink creation check
+      return;
+    }
+
+    // 1. Direct path through symlink to existing outside file
+    const targetThroughSymlink = path.join(symlinkInsideVault, 'secret_passwords.txt');
+    expect(isPathInsideVault(targetThroughSymlink, testVault)).toBe(false);
+
+    // 2. Path through symlink to non-existing file (traversal creation attempt)
+    const nonExistingThroughSymlink = path.join(symlinkInsideVault, 'new_escape.md');
+    expect(isPathInsideVault(nonExistingThroughSymlink, testVault)).toBe(false);
+
+    // 3. Normal file inside vault is allowed
+    const validInside = path.join(testVault, '01_Projects', 'note.md');
+    expect(isPathInsideVault(validInside, testVault)).toBe(true);
+  });
+
+  it('R10: isLocalEndpoint strictly enforces local offline endpoints and rejects remote URLs', () => {
+    expect(isLocalEndpoint('http://127.0.0.1:8080')).toBe(true);
+    expect(isLocalEndpoint('http://localhost:1234/v1')).toBe(true);
+    expect(isLocalEndpoint('http://0.0.0.0:8000')).toBe(true);
+    expect(isLocalEndpoint('http://[::1]:8080')).toBe(true);
+
+    expect(isLocalEndpoint('https://api.openai.com/v1')).toBe(false);
+    expect(isLocalEndpoint('https://generativelanguage.googleapis.com')).toBe(false);
+    expect(isLocalEndpoint('http://remote-server.com:8080')).toBe(false);
+    expect(isLocalEndpoint('ftp://127.0.0.1:8080')).toBe(false);
+    expect(isLocalEndpoint('')).toBe(false);
+    expect(isLocalEndpoint(undefined)).toBe(false);
+  });
+
+  it('R11: parseDecisionResponse never assigns artificial 100% confidence to uncalibrated or invalid model responses', () => {
+    const options = ['Projects', 'Knowledge', 'Journal'];
+
+    // 1. Completely invalid or ambiguous response -> confidence 0.0, letter '?'
+    const invalidRes = parseDecisionResponse({ choices: [{ message: { content: 'I am not sure what to choose' } }] }, options);
+    expect(invalidRes.confidence).toBe(0.0);
+    expect(invalidRes.chosen.letter).toBe('?');
+    expect(invalidRes.calibrated).toBe(false);
+
+    // 2. Uncalibrated single-letter fallback without logprobs -> confidence capped at conservative 0.5, NEVER 1.0
+    const fallbackRes = parseDecisionResponse({ choices: [{ message: { content: 'Option B' } }] }, options);
+    expect(fallbackRes.chosen.letter).toBe('B');
+    expect(fallbackRes.confidence).toBe(0.5);
+    expect(fallbackRes.calibrated).toBe(false);
+    expect(fallbackRes.confidence).toBeLessThan(1.0);
+
+    // 3. Calibrated logprobs response with high confidence
+    const calibratedRes = parseDecisionResponse({
+      choices: [{
+        message: { content: 'A' },
+        logprobs: {
+          content: [{
+            top_logprobs: [
+              { token: 'A', logprob: Math.log(0.92) },
+              { token: 'B', logprob: Math.log(0.08) }
+            ]
+          }]
+        }
+      }]
+    }, options);
+    expect(calibratedRes.calibrated).toBe(true);
+    expect(calibratedRes.confidence).toBeGreaterThan(0.9);
+  });
+
+  it('R12: Snapshot rollback detects conflicts and preserves newer modified files as conflict backups', async () => {
+    const notePath = path.join(testVault, '01_Projects', 'roadmap.md');
+    await fsPromises.mkdir(path.dirname(notePath), { recursive: true });
+    await fsPromises.writeFile(notePath, '# Original Version\nCreated before session.', 'utf-8');
+
+    // 1. Create snapshot session and back up note
+    const session = createSnapshotSession(testVault, 'test_conflict_session');
+    await session.backup(notePath);
+    expect(session.backedUpCount()).toBe(1);
+
+    // 2. Simulate user or process modifying the note with new edits after the snapshot
+    await new Promise(r => setTimeout(r, 100));
+    await fsPromises.writeFile(notePath, '# Newer User Edits\nImportant new data that must not be lost!', 'utf-8');
+
+    // 3. Rollback the session
+    const result = await restoreSnapshotSession(testVault, 'test_conflict_session');
+    expect(result.restoredCount).toBe(1);
+    expect(result.conflicts.length).toBe(1);
+
+    // Verify conflict backup file was created and contains the newer edits
+    const conflictBackup = result.conflicts[0].conflictBackupPath;
+    expect(fs.existsSync(conflictBackup)).toBe(true);
+    const savedNewerContent = await fsPromises.readFile(conflictBackup, 'utf-8');
+    expect(savedNewerContent).toContain('Important new data that must not be lost!');
+
+    // Verify restored file has the original content
+    const restoredContent = await fsPromises.readFile(notePath, 'utf-8');
+    expect(restoredContent).toContain('# Original Version');
+  });
+
+  it('R13: recoverQueueState restores persisted file queue tasks and retry counts after crash/restart', async () => {
+    setCurrentConfigForTest({ vaultPath: testVault });
+    const sysDir = path.join(testVault, '99_System');
+    await fsPromises.mkdir(sysDir, { recursive: true });
+
+    const dummyFile1 = path.join(testVault, '00_Inbox', 'doc1.md');
+    const dummyFile2 = path.join(testVault, '00_Inbox', 'doc2.md');
+    await fsPromises.mkdir(path.dirname(dummyFile1), { recursive: true });
+    await fsPromises.writeFile(dummyFile1, 'Doc 1 content', 'utf-8');
+    await fsPromises.writeFile(dummyFile2, 'Doc 2 content', 'utf-8');
+
+    // Write persistent queue state as if saved before unexpected shutdown
+    const statePath = path.join(sysDir, '_queue_state.json');
+    await fsPromises.writeFile(
+      statePath,
+      JSON.stringify([
+        { filePath: dummyFile1, retryCount: 2, addedAt: new Date().toISOString(), nextRetryAt: Date.now() + 5000 },
+        { filePath: dummyFile2, retryCount: 0, addedAt: new Date().toISOString() }
+      ], null, 2),
+      'utf-8'
+    );
+
+    const recoveredCount = await recoverQueueState();
+    expect(recoveredCount).toBe(2);
+  });
+
+  it('R14: package.json version matches documentation (v5.3)', async () => {
+    const pkgRaw = await fsPromises.readFile(path.join(process.cwd(), 'package.json'), 'utf-8');
+    const pkg = JSON.parse(pkgRaw);
+    expect(pkg.version).toBe('5.3.0');
+
+    const readmeRaw = await fsPromises.readFile(path.join(process.cwd(), 'README.md'), 'utf-8');
+    expect(readmeRaw).toContain('v5.3');
   });
 });
