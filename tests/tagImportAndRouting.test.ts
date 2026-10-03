@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import {
   DEFAULT_TAG_TAXONOMY,
   DEFAULT_PROJECT_TAG_PROFILES,
@@ -10,6 +13,17 @@ import {
   curateOrthogonalTags
 } from '../src/server/tags.js';
 import { buildSemanticKnowledgeClusters } from '../src/server/semanticClustering.js';
+import {
+  optimizeVaultForObsidian,
+  ensureObsidianIgnoreFilters,
+  deduplicateMocFiles,
+  pruneOldSnapshots
+} from '../src/server/vaultOptimizer.js';
+import {
+  buildProjectTrackingHarness,
+  toggleProjectTaskInVault,
+  syncProjectHarnessToVault
+} from '../src/server/projectHarness.js';
 
 describe('Tag Import/Export, Project Detection & Tag-Based Directory Routing', () => {
   it('parses Markdown tag lists (project-hashtags-expanded.md format) with axes and project clusters', () => {
@@ -225,5 +239,160 @@ Nova-Lab:
       'fragment_04.md'
     ]);
     expect(neuroCluster!.recommendedFolder).toBe('01_Projects/Neuromicon');
+  });
+
+  it('configures .obsidian/app.json ignore filters and optimizes startup speed', async () => {
+    const tmpVault = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidian_opt_test_'));
+    try {
+      // 1. Setup simulated bloated vault
+      const obsidianDir = path.join(tmpVault, '.obsidian');
+      fs.mkdirSync(obsidianDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(obsidianDir, 'app.json'),
+        JSON.stringify({ userIgnoreFilters: ['node_modules'] }),
+        'utf-8'
+      );
+
+      // Create old backup folders
+      const snap1 = path.join(tmpVault, '99_System', '_refine_backup', '2026-09-01T00-00-00');
+      const snap2 = path.join(tmpVault, '99_System', '_refine_backup', '2026-10-01T00-00-00');
+      fs.mkdirSync(snap1, { recursive: true });
+      fs.mkdirSync(snap2, { recursive: true });
+      fs.writeFileSync(path.join(snap1, 'OldDoc1.md'), 'old backup 1', 'utf-8');
+      fs.writeFileSync(path.join(snap1, 'OldDoc2.md'), 'old backup 2', 'utf-8');
+      fs.writeFileSync(path.join(snap2, 'RecentDoc.md'), 'recent backup', 'utf-8');
+
+      // Create bloated MOC file
+      const mocsDir = path.join(tmpVault, '00_MOC');
+      fs.mkdirSync(mocsDir, { recursive: true });
+      const mocLines = ['# MOC Topics', ''];
+      for (let i = 0; i < 40; i++) {
+        mocLines.push('- [[DocA]] - Summary A');
+      }
+      mocLines.push('- [[DocB]] - Summary B');
+      fs.writeFileSync(path.join(mocsDir, 'moc_topics.md'), mocLines.join('\n'), 'utf-8');
+
+      // Run optimization
+      const report = await optimizeVaultForObsidian(tmpVault, { keepSnapshots: 1 });
+
+      expect(report.ignoreFiltersConfigured).toBe(true);
+      expect(report.appliedIgnoreFilters).toContain('99_System/');
+      expect(report.snapshotsPruned).toBeGreaterThanOrEqual(1);
+      expect(report.mocLinesDeduplicated).toBeGreaterThan(0);
+
+      // Verify .obsidian/app.json has ignore filters
+      const appJson = JSON.parse(fs.readFileSync(path.join(obsidianDir, 'app.json'), 'utf-8'));
+      expect(appJson.userIgnoreFilters).toContain('99_System/');
+      expect(appJson.userIgnoreFilters).toContain('00_Inbox/Processed/');
+
+      // Verify deduplicated MOC has unique bullets
+      const cleanedMoc = fs.readFileSync(path.join(mocsDir, 'moc_topics.md'), 'utf-8');
+      const docACount = (cleanedMoc.match(/\[\[DocA\]\]/g) || []).length;
+      expect(docACount).toBe(1);
+    } finally {
+      fs.rmSync(tmpVault, { recursive: true, force: true });
+    }
+  });
+
+  it('extracts tasks, builds Project Tracking Harness, toggles tasks, and syncs to 00_MOC dashboard', async () => {
+    const tmpVault = fs.mkdtempSync(path.join(os.tmpdir(), 'harness_test_'));
+    try {
+      const inboxDir = path.join(tmpVault, '00_Inbox');
+      const projectHermesDir = path.join(tmpVault, '01_Projects', 'Hermes');
+      fs.mkdirSync(inboxDir, { recursive: true });
+      fs.mkdirSync(projectHermesDir, { recursive: true });
+
+      // Note inside project folder with tasks
+      fs.writeFileSync(
+        path.join(projectHermesDir, 'hermes_core.md'),
+        `---\ntitle: "Hermes Core Spec"\ntags:\n  - Hermes\n---\n# Hermes Core Spec\n\n- [ ] Implement local router\n- [x] Configure LLM endpoint\n`,
+        'utf-8'
+      );
+
+      // Scattered note in 00_Inbox mentioning project Hermes
+      fs.writeFileSync(
+        path.join(inboxDir, 'meeting_notes.md'),
+        `---\ntitle: "Tuesday Architecture Meeting"\ntags:\n  - meeting\n---\n# Tuesday Architecture Meeting\n\nDiscussion about #Hermes autonomous agent memory.\n\n- [ ] Test Jev 1234 router on 50 sample notes\n`,
+        'utf-8'
+      );
+
+      const rawNotes = [
+        {
+          path: '01_Projects/Hermes/hermes_core.md',
+          filename: 'hermes_core.md',
+          title: 'Hermes Core Spec',
+          body: '# Hermes Core Spec\n\n- [ ] Implement local router\n- [x] Configure LLM endpoint\n',
+          folder: '01_Projects/Hermes',
+          tags: ['Hermes'],
+          modifiedTime: new Date().toISOString()
+        },
+        {
+          path: '00_Inbox/meeting_notes.md',
+          filename: 'meeting_notes.md',
+          title: 'Tuesday Architecture Meeting',
+          body: '# Tuesday Architecture Meeting\n\nDiscussion about #Hermes autonomous agent memory.\n\n- [ ] Test Jev 1234 router on 50 sample notes\n',
+          folder: '00_Inbox',
+          tags: ['meeting', 'Hermes'],
+          modifiedTime: new Date().toISOString()
+        }
+      ];
+
+      const report = buildProjectTrackingHarness({
+        notes: rawNotes,
+        projectProfiles: DEFAULT_PROJECT_TAG_PROFILES,
+        discoveredProjects: [
+          {
+            id: 'Hermes',
+            folder: '01_Projects/Hermes',
+            aliases: ['Hermes', 'Гермес'],
+            coreDocTypes: ['Project Spec']
+          }
+        ]
+      });
+
+      const hermesHarness = report.projects.find(p => p.id === 'Hermes');
+      expect(hermesHarness).toBeDefined();
+      expect(hermesHarness!.totalDocsCount).toBe(2);
+      expect(hermesHarness!.inFolderDocsCount).toBe(1);
+      expect(hermesHarness!.scatteredDocsCount).toBe(1);
+      expect(hermesHarness!.openTasksCount).toBe(2);
+      expect(hermesHarness!.completedTasksCount).toBe(1);
+
+      // Test task toggle in file on disk
+      const toggleRes = await toggleProjectTaskInVault(
+        tmpVault,
+        '01_Projects/Hermes/hermes_core.md',
+        2 // index of "- [ ] Implement local router"
+      );
+      expect(toggleRes.success).toBe(true);
+      expect(toggleRes.completed).toBe(true);
+
+      const modifiedContent = fs.readFileSync(
+        path.join(projectHermesDir, 'hermes_core.md'),
+        'utf-8'
+      );
+      expect(modifiedContent).toContain('- [x] Implement local router');
+
+      // Test syncProjectHarnessToVault: routes scattered note and creates MOC dashboard
+      const syncRes = await syncProjectHarnessToVault({
+        vaultPath: tmpVault,
+        report,
+        routeScattered: true
+      });
+
+      expect(syncRes.taggedCount).toBeGreaterThanOrEqual(1);
+      expect(syncRes.routedCount).toBe(1);
+      expect(fs.existsSync(path.join(tmpVault, '00_MOC', 'Project_Harness_Dashboard.md'))).toBe(true);
+      expect(fs.existsSync(path.join(projectHermesDir, 'meeting_notes.md'))).toBe(true);
+
+      const mocContent = fs.readFileSync(
+        path.join(tmpVault, '00_MOC', 'Project_Harness_Dashboard.md'),
+        'utf-8'
+      );
+      expect(mocContent).toContain('# Project Tracking Harness Dashboard');
+      expect(mocContent).toContain('## #Hermes');
+    } finally {
+      fs.rmSync(tmpVault, { recursive: true, force: true });
+    }
   });
 });

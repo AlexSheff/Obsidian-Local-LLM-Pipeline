@@ -87,6 +87,7 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
   const [pruningEmpty, setPruningEmpty] = useState(false);
   const [syncingProjects, setSyncingProjects] = useState(false);
   const [normalizingTags, setNormalizingTags] = useState(false);
+  const [optimizingObsidian, setOptimizingObsidian] = useState(false);
   const [lastSnapshotId, setLastSnapshotId] = useState<string | null>(null);
   const [rollingBackSnapshot, setRollingBackSnapshot] = useState(false);
   const [creatingDemo, setCreatingDemo] = useState(false);
@@ -241,6 +242,28 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
     }
   };
 
+  const handleOptimizeObsidian = async () => {
+    setOptimizingObsidian(true);
+    setActionFeedback(null);
+    try {
+      const res = await axios.post('/api/vault/optimize-obsidian', { keepSnapshots: 1 });
+      onRefreshLogs();
+      setActionFeedback({
+        message:
+          res.data?.message ||
+          'Optimized vault for fast Obsidian startup (.obsidian/app.json ignore filters active, old backups & MOC bloat cleaned).',
+        type: 'success'
+      });
+    } catch (err: any) {
+      setActionFeedback({
+        message: 'Vault optimization failed: ' + (err.response?.data?.error || err.message),
+        type: 'error'
+      });
+    } finally {
+      setOptimizingObsidian(false);
+    }
+  };
+
   const handleCreateDemoVault = async () => {
     setCreatingDemo(true);
     setActionFeedback(null);
@@ -296,11 +319,14 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
         setLastSnapshotId(tagRouteRes.data.snapshotId);
       }
 
-      // Stage 5: Prune any existing empty directories & queue Jev + LLM Dual-Model Enrichment
+      // Stage 5: Prune any existing empty directories, optimize Obsidian startup & sync Project Harness
       const pruneRes = await axios
         .post('/api/vault/prune-empty')
         .catch(() => ({ data: { prunedCount: 0 } }));
       const pruned = (pruneRes.data?.prunedCount || 0) + (tagRouteRes.data?.prunedFoldersCount || 0);
+
+      await axios.post('/api/projects/harness/sync', { routeScattered: false }).catch(() => {});
+      await axios.post('/api/vault/optimize-obsidian', { keepSnapshots: 1 }).catch(() => {});
 
       const refineRes = await axios
         .post('/api/refine-vault', {
@@ -310,7 +336,7 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
         .catch(() => ({ data: { total: 0 } }));
 
       setActionFeedback({
-        message: `Full Auto-Pipeline complete: updated L0–L7 tags on ${tagsUpdated} note(s), routed ${tagMoved} file(s) to project/PARA folders, purged ${purged} ghost note(s), merged ${deduped} duplicate(s), pruned ${pruned} empty folder(s), and queued ${refineRes.data?.total || 0} note(s) for Jev + LLM enrichment.`,
+        message: `Full Auto-Pipeline complete: updated clean #tags on ${tagsUpdated} note(s), routed ${tagMoved} file(s), synced Project Harness, optimized .obsidian/app.json startup speed, purged ${purged} ghost note(s), merged ${deduped} duplicate(s), and pruned ${pruned} empty folder(s).`,
         type: 'success'
       });
       fetchRegistry();
@@ -520,6 +546,14 @@ export const PipelineWorkspace: React.FC<PipelineWorkspaceProps> = ({
               className="px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200 text-xs font-medium transition-colors"
             >
               {syncingProjects ? 'Scanning...' : 'Re-Scan Projects'}
+            </button>
+            <button
+              onClick={handleOptimizeObsidian}
+              disabled={optimizingObsidian}
+              className="px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-xs font-medium transition-colors"
+              title="Clean accumulated 99_System backups, deduplicate MOC links, and configure .obsidian/app.json ignore filters so Obsidian starts instantly"
+            >
+              {optimizingObsidian ? 'Optimizing...' : 'Fast Obsidian Startup'}
             </button>
             <button
               onClick={handlePruneEmptyFolders}

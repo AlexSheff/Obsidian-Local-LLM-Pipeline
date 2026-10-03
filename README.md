@@ -1,13 +1,16 @@
-# Obsidian Local LLM Pipeline (v5.2 — Full-Meaning Semantic Clustering, Clean `#Tags` & Dynamic Semantic Hypergraph)
+# Obsidian Local LLM Pipeline (v5.3 — Fast-Init Optimizer, Project Tracking Harness & Full-Meaning Semantic Clustering)
 
-**100% Offline, Privacy-First Knowledge Base Organizer, Full-Meaning Semantic Clustering Engine, Clean `#Tag` Project Router, Dynamic Semantic Hypergraph (DSH), and Dual-Model AI Pipeline (`Jev 1234` + `Primary LLM 8080`) for Obsidian Vaults.**
+**100% Offline, Privacy-First Knowledge Base Organizer, Fast-Init Obsidian Optimizer, Project Tracking Harness (`00_MOC/Project_Harness_Dashboard.md`), Full-Meaning Semantic Clustering Engine, Clean `#Tag` Project Router, and Dynamic Semantic Hypergraph (DSH).**
 
-Built for knowledge workers, researchers, and creators who want their Obsidian Vault organized automatically by **full document meaning**, **clean atomic `#tags`**, and **local neural inference** without sending a single byte of data to the cloud.
+Built for knowledge workers, researchers, and creators who want their Obsidian Vault organized automatically by **project momentum**, **actionable tasks**, **full document meaning**, and **local neural inference** without sending a single byte of data to the cloud.
 
 ---
 
 ## Evolution & Version History
-- **v5.2 (Current)**:
+- **v5.3 (Current)**:
+  - **Obsidian Fast-Init Optimizer (`src/server/vaultOptimizer.ts`)**: Permanently eliminates slow vault startup in Obsidian Desktop. Automatically configures `.obsidian/app.json` `userIgnoreFilters` (`99_System/`, `00_Inbox/Processed/`, `00_Inbox/Review/`), prunes accumulated backup snapshots in `99_System/_refine_backup` (keeping only the latest undo snapshot), purges legacy trash copies, and deduplicates bloated `00_MOC/moc_*.md` link caches. Accessible via 1-click UI button (`Fast-Init Obsidian`) and automated on vault startup.
+  - **Project Tracking Harness & Live Obsidian MOC Dashboard (`src/server/projectHarness.ts`)**: Wraps the vault with a real-time project management dashboard. Automatically aggregates project documents and roles (`spec`, `roadmap`, `architecture`, `script`, `research`), extracts open/completed tasks (`- [ ]`, `- [x]`, `TODO:`), provides interactive two-way checkbox toggling directly on disk, computes project momentum scores, and generates/updates `00_MOC/Project_Harness_Dashboard.md` with live `[[wikilinks]]`.
+- **v5.2**:
   - **Full-Meaning Semantic Knowledge Clustering (`src/server/semanticClustering.ts`)**: Groups documents by complete text meaning (TF-IDF document vectors + bilingual RU/EN morphological stemming + cross-lingual concept anchors + project/domain signatures), discovers **Semantic Bridges** across languages and folders, and applies cluster `#tags` + folder routing in 1 click.
   - **100% Clean Atomic `#Tag` System (`src/server/tags.ts`)**: Eliminated slash-prefixed tags (`#system/...`, `#type/...`, `#domain/...`, `#project/...`) in favor of clean atomic `#tags` (`#Hermes`, `#Neuromicon`, `#World-1149`, `#UUCPFF`, `#AI`, `#agents`, `#LLM`, `#research`, `#active`). Automatic stripping of legacy slash prefixes on import and refinement.
   - **Streamlined 4-Workspace UI**: Progressive disclosure, zero visual clutter, and direct cross-tab navigation between Semantic Clusters and the Vault Editor.
@@ -17,6 +20,43 @@ Built for knowledge workers, researchers, and creators who want their Obsidian V
 - **v5.0**:
   - **Dynamic Semantic Hypergraph (DSH — H0 to H7)**: Concept extraction, Semantic DNA fingerprinting (`dnaEngine.ts`), Oracle pairwise synthesis (`oracle.ts`), Triage Bridge with auto-stop guard (`triageBridge.ts`), cost/rate tracking, and garbage collection.
   - **Vault-Agnostic Dynamic Project Discovery & Hierarchical Routing**: Zero hardcoded project lists (`projectsRegistry.ts`), multi-step hierarchical decision routing (`hierarchicalRouter.ts`), Calibration Gate (`thresholds.json`), and P0 Security Hardening (`R1–R8`).
+
+---
+
+## Root Cause & Solution: Obsidian Slow Vault Initialization
+
+### Why Obsidian Stalls on "Initializing vault..."
+1. **Unbounded Backup Duplication**: Every batch sorting, refinement, or ghost-purge run creates safety snapshots under `99_System/_refine_backup/<timestamp>/`. Over time, tens of duplicate full-vault trees accumulate on disk.
+2. **Missing MetadataCache Ignore Filters**: By default, Obsidian Desktop's internal indexer scans every non-hidden directory in the vault root. Without explicit `userIgnoreFilters` in `.obsidian/app.json`, Obsidian reads, parses frontmatter, resolves `[[wikilinks]]`, and indexes tags across every single backup file on every app launch.
+3. **Bloated MOC Files**: Older versions appended links to `00_MOC/moc_*.md` without strict deduplication, creating thousands of repeated link lines for Obsidian's link resolver to parse.
+
+### How the Fast-Init Optimizer Permanently Fixes It
+- **Automatic `.obsidian/app.json` Configuration**: Injects `userIgnoreFilters: ["99_System/", "99_System", "00_Inbox/Processed/", "00_Inbox/Review/"]`. Obsidian immediately skips `99_System` during startup indexing and tag cache building.
+- **Snapshot Rotation**: Automatically retains the latest 1 undo session (`keepSnapshots: 1`) and prunes older historical snapshots and accumulated `_trash` directories.
+- **MOC Deduplication**: Scans and compacts `00_MOC/moc_*.md` files, keeping link maps lean and fast.
+- **Triggering Fast-Init**: Runs automatically on vault connect, vault initialization (`/api/init-vault`), or via the **Fast-Init Obsidian** button in the header bar.
+
+---
+
+## Project Tracking Harness & Live Obsidian MOC Dashboard
+
+Open **`2. Project Harness & #Tags`** to monitor and orchestrate all projects across your vault:
+
+### 1. Live Project Dashboard (`00_MOC/Project_Harness_Dashboard.md`)
+Click **"Sync Harness & Update MOC"** to automatically generate a rich Markdown dashboard inside your vault with:
+- Active projects and momentum scores (0–100%).
+- Open action items with live `[[wikilinks]]` back to the exact source notes.
+- Categorized project artifacts (`[SPEC]`, `[ROADMAP]`, `[ARCHITECTURE]`, `[SCRIPT]`, `[RESEARCH]`).
+- Clean project `#tags` list.
+
+### 2. Two-Way Action Item & Task Management
+- Extracts `- [ ]`, `- [x]`, and `TODO:` / `ЗАДАЧА:` lines from all notes across each project.
+- **Interactive Checkbox Toggling**: Clicking a task checkbox in the UI instantly toggles `- [ ]` ↔ `- [x]` directly inside the underlying Markdown file on disk.
+- Click the note title next to any task to open it immediately in the Vault Editor.
+
+### 3. Scattered Note Routing
+- Detects notes belonging to a project that are currently scattered in `00_Inbox` or other folders.
+- 1-click **"Sync"** or **"Sync Harness & Update MOC"** tags all project notes with clean `#ProjectTag` and moves scattered files into their canonical `01_Projects/<ProjectName>` directory.
 
 ---
 
@@ -44,7 +84,7 @@ Built for knowledge workers, researchers, and creators who want their Obsidian V
 - **Oracle Synthesis & Triage Bridge (`oracle.ts`, `triageBridge.ts`)**: Proposes high-value cross-domain connections with human-in-the-loop confirmation and automatic pause if confirmation rate drops below 30%.
 
 ### 5. Vault Safety, Snapshot Rollback & Security (`R1–R8`)
-- **Non-Destructive Snapshot Sessions (`snapshot.ts`)**: Every batch routing, cluster application, duplicate cleanup, or ghost purge creates a restorable snapshot in `99_System/_snapshots` with 1-click rollback.
+- **Non-Destructive Snapshot Sessions (`snapshot.ts`)**: Every batch routing, cluster application, duplicate cleanup, or ghost purge creates a restorable snapshot in `99_System/_refine_backup` with 1-click rollback.
 - **Strict Path Traversal & Symlink Protection**: All file operations are verified via `isPathInsideVault` (`realpathSync` validation).
 - **3-Layer Duplicate Cleaner & Empty Folder Pruner**: SHA-256 exact hash deduplication (merging unique tags before removal), normalized title collision detection, and automatic recursive empty directory cleanup.
 
@@ -58,7 +98,7 @@ Built for knowledge workers, researchers, and creators who want their Obsidian V
    - Built-in **Local Vault AI Chat Assistant** (`KnowledgeChatPanel.tsx`) capable of searching, summarizing, creating, retagging, and moving notes.
 2. **`2. Semantic Clusters & #Tags` (`TagTaxonomyWorkspace.tsx`)**:
    - **`1. Semantic Clusters`**: Inspect full-meaning document clusters, filter by concept or misplaced status, click any note title to open it directly in the editor, add custom `#tags` to a cluster, and organize files in 1 click.
-   - **`2. Project #Tags`**: Manage project `#tag` profiles, preview routing changes (`Preview Routing`), and batch-route vault files.
+   - **`2. Project Harness & #Tags`**: Monitor project momentum, interactive task checkboxes, scattered notes routing, and 1-click sync to `00_MOC/Project_Harness_Dashboard.md`.
    - **`3. Import & #Tag Catalog`**: Import/export `.md` and `.json` tag files and manage the unified L0–L7 clean `#tag` catalog.
 3. **`3. Pipeline & Audits` (`PipelineWorkspace.tsx`)**:
    - **1-Click Full Auto-Pipeline**: Project sync → ghost cleanup → exact deduplication → clean `#tag` classification & routing → empty folder pruning → Dual-Model enrichment.
@@ -83,7 +123,7 @@ npm run start
 
 ### CLI Scripts & Hypergraph Utilities
 ```bash
-npm run test                  # Run full Vitest suite (13 test suites, 107 tests)
+npm run test                  # Run full Vitest suite (13 test suites, 109 tests)
 npm run lint                  # TypeScript strict typecheck (tsc --noEmit)
 npm run calibrate             # Calibrate Jev decision thresholds
 npm run hypergraph:bootstrap  # Bootstrap Dynamic Semantic Hypergraph index
@@ -93,47 +133,14 @@ npm run hypergraph:gc         # Run hypergraph garbage collection
 
 ---
 
-## Importing Custom `#Tags` (`project-hashtags-expanded.md`)
-
-Open **`2. Semantic Clusters & #Tags` → `3. Import & #Tag Catalog`** and upload a `.md`, `.txt`, or `.json` file (or import directly from your vault):
-
-```markdown
-# My Clean Project & Knowledge Tags
-
-### Hermes
-Folder: 01_Projects/Hermes
-Aliases: Hermes, Гермес, Hermes Agent
-```text
-#Hermes
-#agent-orchestration
-#multi-agent
-#memory
-#routing
-#local-LLM
-#free-API
-```
-
-### Neuromicon
-Folder: 01_Projects/Neuromicon
-Aliases: Neuromicon, Нейромикон, World-1149, Мир 1149
-```text
-#Neuromicon
-#World-1149
-#Protocol-Contact
-#24+1
-#Defragmentation
-#E=M×C²
-#transmedia
-#ARG
-```
-```
-
----
-
 ## REST API Reference
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
+| `/api/vault/optimize-obsidian` | `POST` | Configures `.obsidian/app.json` ignore filters, prunes old snapshots, deduplicates MOCs for fast Obsidian startup. |
+| `/api/projects/harness` | `GET` | Retrieves full Project Tracking Harness report with momentum, tasks, and artifacts. |
+| `/api/projects/harness/sync` | `POST` | Tags project notes, routes scattered files into project folders, and generates `00_MOC/Project_Harness_Dashboard.md`. |
+| `/api/projects/harness/toggle-task` | `POST` | Toggles `- [ ]` ↔ `- [x]` directly inside the underlying note file on disk. |
 | `/api/vault/clusters` | `GET` | Full-meaning semantic clustering & cross-note Semantic Bridges discovery. |
 | `/api/vault/clusters/apply` | `POST` | Applies clean cluster `#tags` (plus optional `extraTags`) and routes cluster notes to target folders with snapshot backup. |
 | `/api/tags/taxonomy` | `GET / POST` | Retrieves or updates the clean `#tag` catalog, project profiles, and routing rules. |

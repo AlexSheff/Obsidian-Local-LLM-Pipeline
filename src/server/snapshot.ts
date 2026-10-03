@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
+import { ensureObsidianIgnoreFilters, pruneOldSnapshots } from './vaultOptimizer';
 
 export interface SnapshotSession {
   sessionId: string;
@@ -13,6 +14,8 @@ export interface SnapshotSession {
 /**
  * Creates a snapshot session for backing up files before modifications.
  * Backups are stored in 99_System/_refine_backup/<ISO-timestamp>/<relative-path>.
+ * Automatically configures .obsidian/app.json ignore filters and rotates older snapshots
+ * so Obsidian Desktop never slows down indexing accumulated backup files.
  */
 export function createSnapshotSession(vaultPath: string, customSessionId?: string): SnapshotSession {
   // Use ISO timestamp with safe characters (replacing colons with hyphens)
@@ -20,11 +23,20 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
   const backupDir = path.join(vaultPath, '99_System', '_refine_backup', sessionId);
   const backedUpFiles = new Set<string>();
   const movedFiles: Array<{ fromRel: string; toRel: string }> = [];
+  let maintenanceTriggered = false;
+
+  const triggerMaintenanceOnce = () => {
+    if (maintenanceTriggered) return;
+    maintenanceTriggered = true;
+    ensureObsidianIgnoreFilters(vaultPath).catch(() => {});
+    pruneOldSnapshots(vaultPath, 2, sessionId).catch(() => {});
+  };
 
   return {
     sessionId,
     backupDir,
     async backup(filePath: string): Promise<string | null> {
+      triggerMaintenanceOnce();
       const resolvedFile = path.resolve(filePath);
       const resolvedVault = path.resolve(vaultPath);
 

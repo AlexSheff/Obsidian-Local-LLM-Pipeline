@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import axios from 'axios';
 import {
-  Tag,
   Plus,
   X,
   FolderGit2,
@@ -13,14 +12,16 @@ import {
   Download,
   FileText,
   ArrowRight,
-  Folder,
   Eye,
   Play,
   RotateCcw,
   Network,
   Search,
   Link2,
-  ExternalLink
+  ExternalLink,
+  Zap,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 export interface TaxonomyAxis {
@@ -90,6 +91,56 @@ export interface SemanticKnowledgeCluster {
   cohesionScore: number;
   misplacedCount: number;
   notes: ClusteredNoteMember[];
+}
+
+export interface ProjectHarnessTask {
+  id: string;
+  text: string;
+  completed: boolean;
+  notePath: string;
+  noteTitle: string;
+  lineIndex: number;
+}
+
+export interface ProjectHarnessArtifact {
+  path: string;
+  filename: string;
+  title: string;
+  role: 'spec' | 'roadmap' | 'architecture' | 'script' | 'research' | 'note';
+  currentFolder: string;
+  targetFolder: string;
+  needsRouting: boolean;
+  tags: string[];
+  modifiedTime: string;
+}
+
+export interface ProjectHarnessItem {
+  id: string;
+  projectTag: string;
+  targetFolder: string;
+  associatedTags: string[];
+  aliases: string[];
+  status: 'active' | 'in-progress' | 'planning' | 'completed' | 'idle';
+  momentumScore: number;
+  totalDocsCount: number;
+  inFolderDocsCount: number;
+  scatteredDocsCount: number;
+  openTasksCount: number;
+  completedTasksCount: number;
+  openTasks: ProjectHarnessTask[];
+  completedTasks: ProjectHarnessTask[];
+  artifacts: ProjectHarnessArtifact[];
+  lastUpdated: string | null;
+}
+
+export interface ProjectHarnessReport {
+  projects: ProjectHarnessItem[];
+  totalProjects: number;
+  totalProjectDocs: number;
+  totalScatteredDocs: number;
+  totalOpenTasks: number;
+  totalCompletedTasks: number;
+  dashboardPath: string;
 }
 
 interface TagTaxonomyWorkspaceProps {
@@ -176,6 +227,24 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
   const [clusterCustomTags, setClusterCustomTags] = useState<Record<string, string[]>>({});
   const [clusterTagInputs, setClusterTagInputs] = useState<Record<string, string>>({});
 
+  // Project Tracking Harness state
+  const [harnessReport, setHarnessReport] = useState<ProjectHarnessReport>({
+    projects: [],
+    totalProjects: 0,
+    totalProjectDocs: 0,
+    totalScatteredDocs: 0,
+    totalOpenTasks: 0,
+    totalCompletedTasks: 0,
+    dashboardPath: '00_MOC/Project_Harness_Dashboard.md'
+  });
+  const [loadingHarness, setLoadingHarness] = useState(false);
+  const [syncingHarnessId, setSyncingHarnessId] = useState<string | null>(null);
+  const [togglingTaskId, setTogglingTaskId] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<'all' | 'active' | 'scattered'>('all');
+
+  // Obsidian Fast-Init Optimizer state
+  const [optimizingObsidian, setOptimizingObsidian] = useState(false);
+
   // Import state
   const [importText, setImportText] = useState('');
   const [vaultImportPath, setVaultImportPath] = useState('project-hashtags-expanded.md');
@@ -243,10 +312,97 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
     }
   };
 
+  const fetchProjectHarness = async () => {
+    setLoadingHarness(true);
+    try {
+      const res = await axios.get('/api/projects/harness');
+      if (res.data && Array.isArray(res.data.projects)) {
+        setHarnessReport(res.data);
+      }
+    } catch {
+      // ignore if vault not yet connected
+    } finally {
+      setLoadingHarness(false);
+    }
+  };
+
+  const refreshAllData = async () => {
+    await Promise.all([fetchTaxonomy(), fetchSemanticClusters(), fetchProjectHarness()]);
+  };
+
   useEffect(() => {
-    fetchTaxonomy();
-    fetchSemanticClusters();
+    refreshAllData();
   }, [vaultPath]);
+
+  const handleOptimizeObsidianStartup = async () => {
+    setOptimizingObsidian(true);
+    setStatusBanner(null);
+    try {
+      const res = await axios.post('/api/vault/optimize-obsidian', { keepSnapshots: 1 });
+      setStatusBanner({
+        type: 'success',
+        text:
+          res.data?.message ||
+          'Vault optimized for instant Obsidian startup (.obsidian/app.json ignore filters configured & redundant snapshots pruned).'
+      });
+      if (onNotify) onNotify();
+    } catch (err: any) {
+      setStatusBanner({
+        type: 'error',
+        text: err.response?.data?.error || 'Failed to optimize vault for Obsidian startup'
+      });
+    } finally {
+      setOptimizingObsidian(false);
+    }
+  };
+
+  const handleSyncProjectHarness = async (projectId?: string) => {
+    setSyncingHarnessId(projectId || 'all');
+    setStatusBanner(null);
+    try {
+      const res = await axios.post('/api/projects/harness/sync', {
+        projectId,
+        routeScattered: true
+      });
+      if (res.data?.snapshotId) {
+        setLastSnapshotId(res.data.snapshotId);
+      }
+      setStatusBanner({
+        type: 'success',
+        text:
+          res.data?.message ||
+          'Synced Project Tracking Harness, routed scattered notes, and updated 00_MOC/Project_Harness_Dashboard.md.'
+      });
+      await Promise.all([fetchProjectHarness(), fetchSemanticClusters()]);
+      if (onNotify) onNotify();
+    } catch (err: any) {
+      setStatusBanner({
+        type: 'error',
+        text: err.response?.data?.error || 'Failed to sync Project Tracking Harness'
+      });
+    } finally {
+      setSyncingHarnessId(null);
+    }
+  };
+
+  const handleToggleProjectTask = async (task: ProjectHarnessTask) => {
+    setTogglingTaskId(task.id);
+    try {
+      await axios.post('/api/projects/harness/toggle-task', {
+        notePath: task.notePath,
+        lineIndex: task.lineIndex
+      });
+      await fetchProjectHarness();
+      if (onNotify) onNotify();
+    } catch (err: any) {
+      setStatusBanner({
+        type: 'error',
+        text: err.response?.data?.error || 'Failed to toggle task in Markdown note'
+      });
+    } finally {
+      setTogglingTaskId(null);
+    }
+  };
 
   const handleAddCustomTagToCluster = (clusterId: string) => {
     const raw = (clusterTagInputs[clusterId] || '')
@@ -285,7 +441,7 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
         type: 'success',
         text: res.data?.message || 'Applied clean #tags and organized semantic cluster files.'
       });
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
@@ -351,39 +507,33 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
       });
       applyTaxonomyResponse(res.data);
       setProjectTagInputs(prev => ({ ...prev, [prof.id]: '' }));
-      setStatusBanner({
-        type: 'success',
-        text: `Added #${raw} to project ${prof.id}`
-      });
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
         type: 'error',
-        text: err.response?.data?.error || 'Failed to update project tags'
+        text: err.response?.data?.error || 'Failed to add project tag'
       });
     }
   };
 
   const handleRemoveTagFromProjectProfile = async (prof: ProjectTagProfile, tagToRemove: string) => {
-    const updatedAssoc = prof.associatedTags.filter(
-      t => t.toLowerCase() !== tagToRemove.toLowerCase()
-    );
+    const updatedAssoc = prof.associatedTags.filter(t => t !== tagToRemove);
     try {
       const res = await axios.post('/api/tags/taxonomy', {
         action: 'upsert_project_profile',
         projectProfile: {
           ...prof,
-          associatedTags: updatedAssoc.length > 0 ? updatedAssoc : [prof.projectTag]
+          associatedTags: updatedAssoc
         }
       });
       applyTaxonomyResponse(res.data);
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
         type: 'error',
-        text: err.response?.data?.error || 'Failed to remove tag from project'
+        text: err.response?.data?.error || 'Failed to remove project tag'
       });
     }
   };
@@ -391,9 +541,9 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
   const handleUpsertProjectProfile = async () => {
     const id = newProjectId.trim().replace(/^#+/, '').replace(/^.*\/+/, '');
     if (!id) return;
-    const folder = newProjectFolder.trim() || `01_Projects/${id}`;
-    const assoc = newProjectTags
-      .split(/[\s,]+/)
+    const targetFolder = newProjectFolder.trim() || `01_Projects/${id}`;
+    const associatedTags = newProjectTags
+      .split(/[,;\n]+/)
       .map(s => s.trim().replace(/^#+/, '').replace(/^.*\/+/, ''))
       .filter(Boolean);
 
@@ -403,9 +553,9 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
         projectProfile: {
           id,
           projectTag: id,
-          targetFolder: folder,
-          associatedTags: [id, ...assoc],
-          aliases: [id, id.replace(/[-_]+/g, ' ')]
+          targetFolder,
+          associatedTags,
+          aliases: [id]
         }
       });
       applyTaxonomyResponse(res.data);
@@ -415,9 +565,9 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
       setShowNewProjectForm(false);
       setStatusBanner({
         type: 'success',
-        text: `Saved project profile "#${id}" → "${folder}".`
+        text: `Saved project "#${id}" → "${targetFolder}".`
       });
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
@@ -427,14 +577,14 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
     }
   };
 
-  const handleRemoveProjectProfile = async (projectTag: string) => {
+  const handleRemoveProjectProfile = async (id: string) => {
     try {
       const res = await axios.post('/api/tags/taxonomy', {
         action: 'remove_project_profile',
-        tag: projectTag
+        tag: id
       });
       applyTaxonomyResponse(res.data);
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
@@ -445,41 +595,41 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
   };
 
   const handleAddRoute = async () => {
-    const cleanTag = newRouteTag.trim().replace(/^#+/, '').replace(/^.*\/+/, '');
-    const cleanFolder = newRouteFolder.trim();
-    if (!cleanTag || !cleanFolder) return;
+    const tag = newRouteTag.trim().replace(/^#+/, '').replace(/^.*\/+/, '');
+    const targetFolder = newRouteFolder.trim();
+    if (!tag || !targetFolder) return;
     try {
       const res = await axios.post('/api/tags/taxonomy', {
         action: 'set_route',
-        routeTag: cleanTag,
-        targetFolder: cleanFolder
+        tag,
+        targetFolder
       });
       applyTaxonomyResponse(res.data);
       setNewRouteTag('');
       setNewRouteFolder('');
-      setStatusBanner({
-        type: 'success',
-        text: `Mapped #${cleanTag} → "${cleanFolder}"`
-      });
+      await fetchSemanticClusters();
+      if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
         type: 'error',
-        text: err.response?.data?.error || 'Failed to save route'
+        text: err.response?.data?.error || 'Failed to save tag route'
       });
     }
   };
 
-  const handleRemoveRoute = async (routeTag: string) => {
+  const handleRemoveRoute = async (tag: string) => {
     try {
       const res = await axios.post('/api/tags/taxonomy', {
         action: 'remove_route',
-        routeTag
+        tag
       });
       applyTaxonomyResponse(res.data);
+      await fetchSemanticClusters();
+      if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
         type: 'error',
-        text: err.response?.data?.error || 'Failed to remove route'
+        text: err.response?.data?.error || 'Failed to remove tag route'
       });
     }
   };
@@ -489,12 +639,11 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      const content = String(ev.target?.result || '');
-      setImportText(content);
-      setSubView('catalog');
+      const text = String(ev.target?.result || '');
+      setImportText(text);
       setStatusBanner({
         type: 'info',
-        text: `Loaded "${file.name}" (${content.length.toLocaleString()} chars). Click "Import Clean #Tags" below to apply.`
+        text: `Loaded "${file.name}" (${text.length} chars). Click "Import Clean #Tags" to apply.`
       });
     };
     reader.readAsText(file, 'utf-8');
@@ -516,7 +665,7 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
           res.data?.message ||
           `Imported ${res.data?.importedTagsCount || 0} clean #tags and ${res.data?.importedProjectsCount || 0} project profiles.`
       });
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
@@ -589,7 +738,7 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
           res.data?.message ||
           `Processed ${res.data?.updatedCount || 0} notes (${res.data?.projectsMatchedCount || 0} matched to projects, ${res.data?.movedCount || 0} routed).`
       });
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
@@ -615,7 +764,7 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
       });
       setLastSnapshotId(null);
       setPreviewItems(null);
-      await fetchSemanticClusters();
+      await Promise.all([fetchSemanticClusters(), fetchProjectHarness()]);
       if (onNotify) onNotify();
     } catch (err: any) {
       setStatusBanner({
@@ -645,6 +794,47 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
     });
   }, [clusters, clusterSearch, onlyMisplacedClusters]);
 
+  // Merge harness items with projectProfiles so even projects with 0 notes in vault are editable
+  const mergedHarnessProjects = useMemo(() => {
+    const byId = new Map<string, ProjectHarnessItem>();
+    for (const item of harnessReport.projects) {
+      byId.set(item.projectTag.toLowerCase(), item);
+    }
+    for (const prof of projectProfiles) {
+      const key = prof.projectTag.toLowerCase();
+      if (!byId.has(key)) {
+        byId.set(key, {
+          id: prof.id,
+          projectTag: prof.projectTag,
+          targetFolder: prof.targetFolder,
+          associatedTags: prof.associatedTags,
+          aliases: prof.aliases,
+          status: 'idle',
+          momentumScore: 0,
+          totalDocsCount: 0,
+          inFolderDocsCount: 0,
+          scatteredDocsCount: 0,
+          openTasksCount: 0,
+          completedTasksCount: 0,
+          openTasks: [],
+          completedTasks: [],
+          artifacts: [],
+          lastUpdated: null
+        });
+      } else {
+        const existing = byId.get(key)!;
+        existing.associatedTags = prof.associatedTags;
+        existing.targetFolder = prof.targetFolder;
+      }
+    }
+    const list = Array.from(byId.values());
+    return list.filter(p => {
+      if (projectFilter === 'active') return p.totalDocsCount > 0 || p.openTasksCount > 0;
+      if (projectFilter === 'scattered') return p.scatteredDocsCount > 0;
+      return true;
+    });
+  }, [harnessReport.projects, projectProfiles, projectFilter]);
+
   return (
     <div className="space-y-5">
       {/* Clean Header & Sub-Navigation Bar */}
@@ -652,7 +842,7 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <h2 className="text-base font-semibold text-neutral-900">
-              Semantic Knowledge Clusters & Clean #Tag System
+              Semantic Knowledge Clusters, Project Tracking Harness & Clean #Tags
             </h2>
             {compactModal && onClose && (
               <button
@@ -664,47 +854,66 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
             )}
           </div>
           <p className="text-xs text-neutral-500">
-            Documents are grouped by full semantic meaning (TF-IDF + bilingual RU/EN concept vectors) · 100% clean atomic <code className="text-neutral-800 font-mono">#tags</code> with zero slash prefixes.
+            Full-meaning document clustering · Live Project Tracking Harness (<code className="text-neutral-800 font-mono">00_MOC/Project_Harness_Dashboard.md</code>) · 100% clean atomic <code className="text-neutral-800 font-mono">#tags</code>.
           </p>
         </div>
 
-        {/* 3 Focused Mode Tabs */}
-        <div className="flex flex-wrap items-center gap-1 bg-neutral-100 p-1 rounded-xl shrink-0">
+        {/* 3 Focused Mode Tabs + Obsidian Fast-Init Button */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
-            onClick={() => setSubView('clusters')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              subView === 'clusters'
-                ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                : 'text-neutral-600 hover:text-neutral-900'
-            }`}
+            type="button"
+            onClick={handleOptimizeObsidianStartup}
+            disabled={optimizingObsidian}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-medium transition-colors"
+            title="Fix slow Obsidian vault initialization: configure .obsidian/app.json ignore filters, prune old backup snapshots, and deduplicate MOC links"
           >
-            <Network className="w-3.5 h-3.5 text-emerald-600" />
-            <span className="tabular-nums">1. Semantic Clusters ({clusteringStats.totalClusters})</span>
+            {optimizingObsidian ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-700" />
+            ) : (
+              <Zap className="w-3.5 h-3.5 text-amber-600" />
+            )}
+            <span>Fast-Init Obsidian</span>
           </button>
 
-          <button
-            onClick={() => setSubView('projects')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              subView === 'projects'
-                ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                : 'text-neutral-600 hover:text-neutral-900'
-            }`}
-          >
-            <FolderGit2 className="w-3.5 h-3.5 text-indigo-600" />
-            <span className="tabular-nums">2. Project #Tags ({projectProfiles.length})</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-1 bg-neutral-100 p-1 rounded-xl">
+            <button
+              onClick={() => setSubView('clusters')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                subView === 'clusters'
+                  ? 'bg-white text-neutral-900 shadow-xs font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <Network className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="tabular-nums">1. Semantic Clusters ({clusteringStats.totalClusters})</span>
+            </button>
 
-          <button
-            onClick={() => setSubView('catalog')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              subView === 'catalog'
-                ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                : 'text-neutral-600 hover:text-neutral-900'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5 text-amber-600" />
-            <span className="tabular-nums">3. Import & #Tag Catalog ({totalTagsCount})</span>
-          </button>
+            <button
+              onClick={() => setSubView('projects')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                subView === 'projects'
+                  ? 'bg-white text-neutral-900 shadow-xs font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <FolderGit2 className="w-3.5 h-3.5 text-indigo-600" />
+              <span className="tabular-nums">
+                2. Project Harness & #Tags ({projectProfiles.length})
+              </span>
+            </button>
+
+            <button
+              onClick={() => setSubView('catalog')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                subView === 'catalog'
+                  ? 'bg-white text-neutral-900 shadow-xs font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5 text-amber-600" />
+              <span className="tabular-nums">3. Import & #Tag Catalog ({totalTagsCount})</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1101,22 +1310,84 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* VIEW 2: PROJECT #TAGS & DIRECTORY ROUTING                             */}
+      {/* VIEW 2: PROJECT TRACKING HARNESS & CLEAN #TAG ROUTER                  */}
       {/* ===================================================================== */}
       {subView === 'projects' && (
         <div className="space-y-5">
-          {/* Top Action Bar */}
-          <div className="bg-white rounded-2xl border border-neutral-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-0.5">
+          {/* Top Project Harness Action & Telemetry Bar */}
+          <div className="bg-white rounded-2xl border border-neutral-200 p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1.5">
               <h3 className="text-sm font-semibold text-neutral-900">
-                Project #Tag Profiles & Automatic Folder Routing
+                Project Tracking Harness & Automatic #Tag Router
               </h3>
-              <p className="text-xs text-neutral-500">
-                Assign clean <code className="text-neutral-800 font-mono">#tags</code> to each project. Notes matching these tags or concepts automatically receive the project tag and route to its folder.
-              </p>
+              {/* Unboxed Zero-Pill Metrics */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500 tabular-nums">
+                <span>
+                  <strong className="text-neutral-900">{mergedHarnessProjects.length}</strong> projects
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  <strong className="text-neutral-900">{harnessReport.totalProjectDocs}</strong> tracked docs
+                </span>
+                {harnessReport.totalScatteredDocs > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-amber-700 font-medium">
+                      {harnessReport.totalScatteredDocs} scattered notes ready to route
+                    </span>
+                  </>
+                )}
+                <span aria-hidden="true">·</span>
+                <span>
+                  <strong className="text-indigo-700">{harnessReport.totalOpenTasks}</strong> open tasks
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  <strong className="text-emerald-700">{harnessReport.totalCompletedTasks}</strong> completed
+                </span>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {/* Filter toggle */}
+              <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-lg text-xs">
+                <button
+                  type="button"
+                  onClick={() => setProjectFilter('all')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    projectFilter === 'all'
+                      ? 'bg-white text-neutral-900 font-semibold shadow-xs'
+                      : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  All ({projectProfiles.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProjectFilter('active')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    projectFilter === 'active'
+                      ? 'bg-white text-neutral-900 font-semibold shadow-xs'
+                      : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  With Docs/Tasks
+                </button>
+                {harnessReport.totalScatteredDocs > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setProjectFilter('scattered')}
+                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                      projectFilter === 'scattered'
+                        ? 'bg-white text-amber-800 font-semibold shadow-xs'
+                        : 'text-amber-700 hover:text-amber-900'
+                    }`}
+                  >
+                    Needs Routing
+                  </button>
+                )}
+              </div>
+
               <button
                 onClick={() => setShowNewProjectForm(!showNewProjectForm)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-xs font-medium transition-colors"
@@ -1124,6 +1395,18 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
                 <Plus className="w-3.5 h-3.5" />
                 {showNewProjectForm ? 'Cancel' : 'New Project'}
               </button>
+
+              {onOpenNote && (
+                <button
+                  type="button"
+                  onClick={() => onOpenNote(harnessReport.dashboardPath || '00_MOC/Project_Harness_Dashboard.md')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 rounded-lg text-xs font-medium transition-colors"
+                  title="Open generated 00_MOC/Project_Harness_Dashboard.md in Vault & Notes"
+                >
+                  <FileText className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Open MOC Dashboard</span>
+                </button>
+              )}
 
               <button
                 onClick={() => handleClassifyAndRoute({ dryRun: true, routeFiles: true })}
@@ -1135,20 +1418,21 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
                 ) : (
                   <Eye className="w-3.5 h-3.5 text-neutral-500" />
                 )}
-                Preview Routing
+                Preview
               </button>
 
               <button
-                onClick={() => handleClassifyAndRoute({ dryRun: false, routeFiles: true })}
-                disabled={runningAction !== null}
-                className="flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold transition-colors"
+                onClick={() => handleSyncProjectHarness(undefined)}
+                disabled={syncingHarnessId !== null}
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors"
+                title="Tag all project documents, route scattered project files into their 01_Projects/* folders, and write 00_MOC/Project_Harness_Dashboard.md"
               >
-                {runningAction === 'classify_and_route' ? (
+                {syncingHarnessId === 'all' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Play className="w-3.5 h-3.5 text-emerald-400" />
                 )}
-                Apply #Tags & Route Vault
+                Sync Harness & Update MOC
               </button>
             </div>
           </div>
@@ -1157,7 +1441,7 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
           {showNewProjectForm && (
             <div className="bg-white rounded-2xl border border-neutral-200 p-5 space-y-3">
               <h4 className="text-xs font-semibold text-neutral-900">
-                Create or Update Project #Tag Profile
+                Create or Update Project in Tracking Harness
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input
@@ -1193,84 +1477,269 @@ export const TagTaxonomyWorkspace: React.FC<TagTaxonomyWorkspaceProps> = ({
             </div>
           )}
 
-          {/* Project Profiles Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projectProfiles.map(prof => (
-              <div
-                key={prof.id}
-                className="bg-white rounded-2xl border border-neutral-200 p-5 flex flex-col justify-between gap-4"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-neutral-100">
-                    <div className="space-y-0.5 min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => onSelectTagFilter && onSelectTagFilter(prof.projectTag)}
-                        className="text-sm font-semibold font-mono text-neutral-900 hover:underline"
-                        title={`Filter Vault notes by #${prof.projectTag}`}
-                      >
-                        #{prof.projectTag}
-                      </button>
-                      <div className="text-[11px] font-mono text-neutral-500 truncate">
-                        → {prof.targetFolder}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleRemoveProjectProfile(prof.projectTag)}
-                      className="text-neutral-400 hover:text-rose-600 p-1"
-                      title="Delete project profile"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+          {/* Project Tracking Harness Cards */}
+          {loadingHarness ? (
+            <div className="bg-white rounded-2xl border border-neutral-200 p-10 flex items-center justify-center gap-2 text-xs text-neutral-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Scanning project folders, tasks, and semantic tags...
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {mergedHarnessProjects.map(proj => {
+                const profileObj: ProjectTagProfile = {
+                  id: proj.id,
+                  projectTag: proj.projectTag,
+                  targetFolder: proj.targetFolder,
+                  associatedTags: proj.associatedTags,
+                  aliases: proj.aliases
+                };
 
-                  {/* Interactive Project Tags */}
-                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
-                    {prof.associatedTags.map(t => {
-                      const clean = t.replace(/^#+/, '').replace(/^.*\/+/, '');
-                      return (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => handleRemoveTagFromProjectProfile(prof, clean)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 hover:bg-rose-50 text-neutral-800 hover:text-rose-700 rounded-md text-[11px] font-mono transition-colors"
-                          title={`Click to remove #${clean} from ${prof.id}`}
-                        >
-                          <span>#{clean}</span>
-                          <span className="text-neutral-400 hover:text-rose-600">×</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Add Tag to Project Input */}
-                <div className="flex gap-1.5 pt-2 border-t border-neutral-100">
-                  <input
-                    type="text"
-                    value={projectTagInputs[prof.id] || ''}
-                    onChange={e =>
-                      setProjectTagInputs(prev => ({ ...prev, [prof.id]: e.target.value }))
-                    }
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddTagToProjectProfile(prof);
-                      }
-                    }}
-                    placeholder={`Add #tag to ${prof.id}...`}
-                    className="flex-1 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-neutral-900"
-                  />
-                  <button
-                    onClick={() => handleAddTagToProjectProfile(prof)}
-                    className="px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-medium transition-colors"
+                return (
+                  <div
+                    key={proj.id}
+                    className="bg-white rounded-2xl border border-neutral-200 p-5 flex flex-col justify-between gap-4 hover:border-neutral-300 transition-colors"
                   >
-                    + Add
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                    <div className="space-y-3.5">
+                      {/* Project Header: Clickable #ProjectTag + Unboxed Status/Momentum + Sync CTA */}
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-neutral-100">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onSelectTagFilter && onSelectTagFilter(proj.projectTag)}
+                              className="text-sm font-semibold font-mono text-neutral-900 hover:underline truncate"
+                              title={`Filter Vault notes by #${proj.projectTag}`}
+                            >
+                              #{proj.projectTag}
+                            </button>
+                          </div>
+
+                          {/* Unboxed Zero-Pill Project Status & Telemetry Line */}
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-neutral-500 tabular-nums">
+                            <span
+                              className={`font-semibold uppercase ${
+                                proj.status === 'in-progress'
+                                  ? 'text-indigo-700'
+                                  : proj.status === 'active'
+                                  ? 'text-emerald-700'
+                                  : 'text-neutral-500'
+                              }`}
+                            >
+                              {proj.status}
+                            </span>
+                            {proj.totalDocsCount > 0 && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-emerald-700 font-medium">
+                                  {proj.momentumScore}% momentum
+                                </span>
+                              </>
+                            )}
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono text-neutral-700">{proj.targetFolder}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>
+                              {proj.totalDocsCount} doc{proj.totalDocsCount === 1 ? '' : 's'}
+                            </span>
+                            {proj.scatteredDocsCount > 0 && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-amber-700 font-medium">
+                                  {proj.scatteredDocsCount} to route
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {proj.totalDocsCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSyncProjectHarness(proj.id)}
+                              disabled={syncingHarnessId !== null}
+                              className="px-3 py-1 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
+                              title={`Tag & route all #${proj.projectTag} notes to ${proj.targetFolder}`}
+                            >
+                              {syncingHarnessId === proj.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              )}
+                              <span>Sync</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleRemoveProjectProfile(proj.projectTag)}
+                            className="text-neutral-400 hover:text-rose-600 p-1"
+                            title="Delete project profile"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Clean Associated #Tags */}
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                          {proj.associatedTags.map(t => {
+                            const clean = t.replace(/^#+/, '').replace(/^.*\/+/, '');
+                            return (
+                              <span
+                                key={t}
+                                className="inline-flex items-center bg-neutral-100 rounded-md text-[11px] font-mono text-neutral-800 overflow-hidden"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectTagFilter && onSelectTagFilter(clean)}
+                                  className="px-2 py-0.5 hover:bg-neutral-900 hover:text-white transition-colors"
+                                  title={`Filter Vault notes by #${clean}`}
+                                >
+                                  #{clean}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveTagFromProjectProfile(profileObj, clean)}
+                                  className="px-1.5 py-0.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                                  title={`Remove #${clean} from ${proj.projectTag}`}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Live Project Tasks / Action Items (Interactive Checkboxes!) */}
+                      {(proj.openTasks.length > 0 || proj.completedTasks.length > 0) && (
+                        <div className="border-t border-neutral-100 pt-3 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                            <span className="font-semibold text-neutral-800">
+                              Project Action Items & Tasks
+                            </span>
+                            <span className="tabular-nums">
+                              {proj.openTasks.length} open · {proj.completedTasks.length} done
+                            </span>
+                          </div>
+
+                          <div className="divide-y divide-neutral-100">
+                            {[...proj.openTasks, ...proj.completedTasks.slice(0, 2)]
+                              .slice(0, 5)
+                              .map(task => (
+                                <div
+                                  key={task.id}
+                                  className="py-1.5 flex items-start justify-between gap-2 text-xs"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleProjectTask(task)}
+                                    disabled={togglingTaskId === task.id}
+                                    className="flex items-start gap-2 text-left group min-w-0 flex-1"
+                                    title="Click to toggle task completion directly inside the Markdown note"
+                                  >
+                                    {togglingTaskId === task.id ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-400 mt-0.5 shrink-0" />
+                                    ) : task.completed ? (
+                                      <CheckSquare className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
+                                    ) : (
+                                      <Square className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-900 mt-0.5 shrink-0" />
+                                    )}
+                                    <span
+                                      className={`leading-snug ${
+                                        task.completed
+                                          ? 'line-through text-neutral-400'
+                                          : 'text-neutral-800 group-hover:text-neutral-900'
+                                      }`}
+                                    >
+                                      {task.text}
+                                    </span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenNote && onOpenNote(task.notePath)}
+                                    className="text-[11px] font-mono text-neutral-400 hover:text-neutral-800 hover:underline shrink-0 truncate max-w-[140px]"
+                                    title={`Open "${task.noteTitle}"`}
+                                  >
+                                    {task.noteTitle}
+                                  </button>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Tracked Project Documents & Artifacts (Hairline-divided rows) */}
+                      {proj.artifacts.length > 0 && (
+                        <div className="border-t border-neutral-100 pt-3 space-y-1.5">
+                          <div className="text-[11px] font-semibold text-neutral-800">
+                            Tracked Project Documents ({proj.artifacts.length})
+                          </div>
+                          <div className="divide-y divide-neutral-100">
+                            {proj.artifacts.slice(0, 5).map(art => (
+                              <div
+                                key={art.path}
+                                className="py-1.5 flex items-center justify-between gap-2 text-xs"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenNote && onOpenNote(art.path)}
+                                  className="flex items-center gap-1.5 text-left group min-w-0"
+                                  title="Click to open document in Vault & Notes"
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-900 shrink-0" />
+                                  <span className="font-medium text-neutral-900 group-hover:underline truncate">
+                                    {art.title}
+                                  </span>
+                                </button>
+
+                                <div className="flex items-center gap-1.5 text-[11px] font-mono text-neutral-500 shrink-0 tabular-nums">
+                                  <span className="uppercase text-neutral-400">{art.role}</span>
+                                  <span aria-hidden="true">·</span>
+                                  {art.needsRouting ? (
+                                    <span className="text-amber-700">
+                                      {art.currentFolder} → {art.targetFolder}
+                                    </span>
+                                  ) : (
+                                    <span className="text-emerald-700">in folder</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Add Tag to Project Input */}
+                    <div className="flex gap-1.5 pt-2 border-t border-neutral-100">
+                      <input
+                        type="text"
+                        value={projectTagInputs[proj.id] || ''}
+                        onChange={e =>
+                          setProjectTagInputs(prev => ({ ...prev, [proj.id]: e.target.value }))
+                        }
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTagToProjectProfile(profileObj);
+                          }
+                        }}
+                        placeholder={`+ #tag to #${proj.projectTag}...`}
+                        className="flex-1 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-neutral-900"
+                      />
+                      <button
+                        onClick={() => handleAddTagToProjectProfile(profileObj)}
+                        className="px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-medium transition-colors"
+                      >
+                        + Add
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Progressive Disclosure for Custom Non-Project #Tag -> Folder Rules */}
           <details className="bg-white rounded-2xl border border-neutral-200 p-5 group">

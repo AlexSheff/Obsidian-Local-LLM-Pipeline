@@ -26,6 +26,13 @@ import {
   VaultTagTaxonomyConfig
 } from './src/server/tags';
 import { buildSemanticKnowledgeClusters, ClusterableNoteInput } from './src/server/semanticClustering';
+import { optimizeVaultForObsidian, ensureObsidianIgnoreFilters } from './src/server/vaultOptimizer';
+import {
+  buildProjectTrackingHarness,
+  toggleProjectTaskInVault,
+  syncProjectHarnessToVault,
+  HarnessRawNote
+} from './src/server/projectHarness';
 import { sanitizeTitle } from './src/server/sanitize';
 import { createSnapshotSession, restoreSnapshotSession, SnapshotSession } from './src/server/snapshot';
 import {
@@ -262,6 +269,15 @@ export function loadConfigFromFile(configFilePath: string = CONFIG_FILE, baseCon
 }
 
 currentConfig = loadConfigFromFile(CONFIG_FILE, currentConfig);
+if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
+  optimizeVaultForObsidian(currentConfig.vaultPath, { keepSnapshots: 1 })
+    .then(rep => {
+      if (rep.backupFilesRemoved + rep.trashFilesRemoved + rep.mocLinesDeduplicated > 0) {
+        addLog(`[Obsidian Fast-Init] ${rep.message}`, 'success');
+      }
+    })
+    .catch(() => {});
+}
 
 export async function buildRouterConfig(
   cfg: typeof currentConfig = currentConfig,
@@ -715,28 +731,16 @@ app.post('/api/vault/purge-ghosts', async (req, res) => {
       });
     }
 
-    // 1-Click Rollback protection: Create snapshot session
+    // 1-Click Rollback protection: Create snapshot session (with automatic rotation & .obsidian ignore filters)
     const session = createSnapshotSession(currentConfig.vaultPath);
-    const trashBase = path.join(
-      currentConfig.vaultPath,
-      '99_System',
-      '_trash',
-      'ghost_notes',
-      session.sessionId
-    );
-    await fsPromises.mkdir(trashBase, { recursive: true });
 
     for (const g of ghostNotes) {
       await session.backup(g.filePath);
-      const destTrash = path.join(trashBase, `${path.basename(g.filePath)}`);
-      await fsPromises.rename(g.filePath, destTrash).catch(async () => {
-        await fsPromises.copyFile(g.filePath, destTrash);
-        await fsPromises.unlink(g.filePath).catch(() => null);
-      });
+      await fsPromises.unlink(g.filePath).catch(() => null);
     }
 
     addLog(
-      `[Hygiene Purge] Safely purged ${ghostNotes.length} empty ghost notes to 99_System/_trash/ghost_notes/${session.sessionId}. Undo snapshot created.`,
+      `[Hygiene Purge] Safely purged ${ghostNotes.length} empty ghost notes. Undo snapshot created (${session.sessionId}).`,
       'success'
     );
 
@@ -1988,32 +1992,51 @@ Extract these exactly 5 fields in valid JSON format:
     unlock();
   }
   
-  // Auto-update MOCs
+  // Auto-update MOCs (with strict deduplication so MOC files never bloat Obsidian's link indexer)
   try {
     const mocsDir = path.join(currentConfig.vaultPath, '00_MOC');
     const link = `[[${mdFilename.replace('.md', '')}]]`;
-    
+    const appendIfMissing = async (filePath: string, lineToAdd: string, checkToken: string) => {
+      if (!fs.existsSync(filePath)) return;
+      const existing = await fsPromises.readFile(filePath, 'utf-8');
+      if (!existing.includes(checkToken)) {
+        await fsPromises.appendFile(filePath, `\n${lineToAdd}`);
+      }
+    };
+
     if (destFolder.includes('03_Knowledge')) {
-      const p = path.join(mocsDir, 'moc_topics.md');
-      if (fs.existsSync(p)) await fsPromises.appendFile(p, `\n- ${link} - ${data.summary || ''}`);
+      await appendIfMissing(
+        path.join(mocsDir, 'moc_topics.md'),
+        `- ${link} - ${data.summary || ''}`,
+        link
+      );
     }
     if (destFolder.includes('01_Projects')) {
-      const p = path.join(mocsDir, 'moc_projects.md');
-      if (fs.existsSync(p)) await fsPromises.appendFile(p, `\n- ${link} - ${data.summary || ''}`);
+      await appendIfMissing(
+        path.join(mocsDir, 'moc_projects.md'),
+        `- ${link} - ${data.summary || ''}`,
+        link
+      );
     }
     if (destFolder.includes('02_Areas') && category === 'People') {
-      const p = path.join(mocsDir, 'moc_people.md');
-      if (fs.existsSync(p)) await fsPromises.appendFile(p, `\n- ${link} - ${data.summary || ''}`);
+      await appendIfMissing(
+        path.join(mocsDir, 'moc_people.md'),
+        `- ${link} - ${data.summary || ''}`,
+        link
+      );
     }
     if (parsedTags && parsedTags.length > 0) {
       const p = path.join(mocsDir, 'moc_tags.md');
       if (fs.existsSync(p)) {
-        const newTags = parsedTags.map(t => `- ${t} => ${link}`).join('\n');
-        await fsPromises.appendFile(p, `\n${newTags}`);
+        const existing = await fsPromises.readFile(p, 'utf-8');
+        if (!existing.includes(link)) {
+          const compactTagLine = `- ${link} — ${parsedTags.slice(0, 6).map(t => `#${String(t).replace(/^#+/, '')}`).join(' ')}`;
+          await fsPromises.appendFile(p, `\n${compactTagLine}`);
+        }
       }
     }
-  } catch(mocErr) {
-     addLog(`Failed to update MOCs.`, 'error');
+  } catch (mocErr) {
+    addLog(`Failed to update MOCs.`, 'error');
   }
 }
 
@@ -2042,6 +2065,10 @@ app.post('/api/config', async (req, res) => {
   try {
     await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(currentConfig, null, 2));
   } catch(e) {}
+
+  if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
+    optimizeVaultForObsidian(currentConfig.vaultPath, { keepSnapshots: 1 }).catch(() => {});
+  }
   
   res.json({ success: true, config: currentConfig });
 });
@@ -2158,9 +2185,12 @@ app.post('/api/init-vault', async (req, res) => {
         await fsPromises.writeFile(sysPath, sys.endsWith('.json') ? '[]' : '');
       }
     }
+
+    await ensureObsidianIgnoreFilters(vaultPath);
+    await optimizeVaultForObsidian(vaultPath, { keepSnapshots: 1 });
     
-    addLog('Vault structure initialized successfully', 'success');
-    res.json({ success: true, message: 'Vault initialized' });
+    addLog('Vault structure initialized and optimized for fast Obsidian startup', 'success');
+    res.json({ success: true, message: 'Vault initialized and optimized for fast Obsidian startup' });
   } catch (error: any) {
     addLog(`Error initializing vault: ${error.message}`, 'error');
     res.status(500).json({ error: 'Could not initialize vault structure' });
@@ -4653,23 +4683,23 @@ app.post('/api/vault/create-demo', async (_req, res) => {
     const sampleNotes: Array<{ relPath: string; content: string }> = [
       {
         relPath: '00_Inbox/hermes_multi_agent_memory_routing.md',
-        content: `---\ntitle: "Hermes Multi-Agent Memory and Free API Routing"\ntags:\n  - Hermes\n  - agent-orchestration\n  - multi-agent\n---\n# Hermes Multi-Agent Memory and Free API Routing\n\nArchitecture specification for #Hermes covering #memory, #routing, and #local-LLM execution across autonomous agents.\n`
+        content: `---\ntitle: "Hermes Multi-Agent Memory and Free API Routing"\ntags:\n  - Hermes\n  - agent-orchestration\n  - multi-agent\n---\n# Hermes Multi-Agent Memory and Free API Routing\n\nArchitecture specification for #Hermes covering #memory, #routing, and #local-LLM execution across autonomous agents.\n\n## Action Items\n- [ ] Implement episodic memory vector compaction for long agent runs\n- [ ] Add automatic fallback router between local llama-server and free API endpoints\n- [x] Define clean atomic #Hermes tag schema\n`
       },
       {
         relPath: '00_Inbox/tuesday_architecture_sync_notes.md',
-        content: `---\ntitle: "Заметки со вторничного созвона по архитектуре"\ntags:\n  - meeting\n---\n# Заметки со вторничного созвона по архитектуре\n\nОбсудили оркестрацию автономных мультиагентов в системе Гермес, долговременную эпизодическую память агентов, локальный роутинг запросов через бесплатные API и управление контекстным окном LLM.\n`
+        content: `---\ntitle: "Заметки со вторничного созвона по архитектуре"\ntags:\n  - meeting\n---\n# Заметки со вторничного созвона по архитектуре\n\nОбсудили оркестрацию автономных мультиагентов в системе Гермес, долговременную эпизодическую память агентов, локальный роутинг запросов через бесплатные API и управление контекстным окном LLM.\n\n- [ ] Протестировать латентность маршрутизатора Jev 1234 на батче из 50 заметок\n`
       },
       {
         relPath: '00_Inbox/world_1149_protocol_contact_arg.md',
-        content: `---\ntitle: "World 1149: Protocol Contact & Defragmentation Scenario"\ntags:\n  - Neuromicon\n  - World-1149\n  - Protocol-Contact\n---\n# World 1149: Protocol Contact & Defragmentation Scenario\n\nTransmedia narrative design for #Neuromicon exploring #Defragmentation, #24+1, and #E=M×C².\n`
+        content: `---\ntitle: "World 1149: Protocol Contact & Defragmentation Scenario"\ntags:\n  - Neuromicon\n  - World-1149\n  - Protocol-Contact\n---\n# World 1149: Protocol Contact & Defragmentation Scenario\n\nTransmedia narrative design for #Neuromicon exploring #Defragmentation, #24+1, and #E=M×C².\n\n## Story Tasks\n- [ ] Finalize Act II dialogue cues for Protocol Contact sequence\n- [x] Establish World-1149 canonical lore rules\n`
       },
       {
         relPath: '00_Inbox/episode_draft_fragment_04.md',
-        content: `---\ntitle: "Черновик драматургии четвёртого эпизода"\ntags:\n  - scenario\n---\n# Черновик драматургии четвёртого эпизода\n\nРазвитие трансмедиа сюжета в мире 1149: активация Протокола Контакт и дефрагментация сознания героев через квест в реальности.\n`
+        content: `---\ntitle: "Черновик драматургии четвёртого эпизода"\ntags:\n  - scenario\n---\n# Черновик драматургии четвёртого эпизода\n\nРазвитие трансмедиа сюжета в мире 1149: активация Протокола Контакт и дефрагментация сознания героев через квест в реальности.\n\n- [ ] Согласовать арку протагониста в сцене дефрагментации\n`
       },
       {
         relPath: '00_Inbox/uucpff_festival_curation_network.md',
-        content: `---\ntitle: "UUCPFF Film Submission & Creator Distribution Pipeline"\ntags:\n  - UUCPFF\n  - film-festival\n  - curation\n---\n# UUCPFF Film Submission & Creator Distribution Pipeline\n\nOperational workflow for #UUCPFF covering #creator-network, #film-submission, and #distribution.\n`
+        content: `---\ntitle: "UUCPFF Film Submission & Creator Distribution Pipeline"\ntags:\n  - UUCPFF\n  - film-festival\n  - curation\n---\n# UUCPFF Film Submission & Creator Distribution Pipeline\n\nOperational workflow for #UUCPFF covering #creator-network, #film-submission, and #distribution.\n\n- [ ] Open Q4 independent AI film submission portal\n- [x] Publish festival jury curation criteria\n`
       },
       {
         relPath: '00_Inbox/semantic_hypergraph_quantization_hypothesis.md',
@@ -4677,7 +4707,7 @@ app.post('/api/vault/create-demo', async (_req, res) => {
       },
       {
         relPath: '00_Inbox/obsidian_tag_taxonomy_pipeline_spec.md',
-        content: `---\ntitle: "Clean Atomic Tag Taxonomy & Semantic Document Clustering"\ntags:\n  - Obsidian-LLM-Pipeline\n  - tagging\n  - file-routing\n---\n# Clean Atomic Tag Taxonomy & Semantic Document Clustering\n\nTechnical specification for #Obsidian-LLM-Pipeline implementing #classification, #tagging, #semantic-ingestion, and #file-routing.\n`
+        content: `---\ntitle: "Clean Atomic Tag Taxonomy & Semantic Document Clustering"\ntags:\n  - Obsidian-LLM-Pipeline\n  - tagging\n  - file-routing\n---\n# Clean Atomic Tag Taxonomy & Semantic Document Clustering\n\nTechnical specification for #Obsidian-LLM-Pipeline implementing #classification, #tagging, #semantic-ingestion, and #file-routing.\n\n- [x] Eliminate slash prefixes from all system tags\n- [ ] Sync Project Tracking Harness dashboard to 00_MOC\n`
       }
     ];
 
@@ -4689,14 +4719,162 @@ app.post('/api/vault/create-demo', async (_req, res) => {
     currentConfig.vaultPath = demoVaultPath;
     await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(currentConfig, null, 2), 'utf-8');
     await bootstrapProjectsYaml(demoVaultPath);
+    await ensureObsidianIgnoreFilters(demoVaultPath);
 
     addLog(`[Demo Vault Ready] Initialized sample Obsidian Vault at "${demoVaultPath}" with 7 sample notes in 00_Inbox.`, 'success');
     res.json({
       success: true,
       vaultPath: demoVaultPath,
       config: currentConfig,
-      message: `Sample Obsidian Vault connected at "${demoVaultPath}" with 7 notes ready for Semantic Clustering & Tag Routing.`
+      message: `Sample Obsidian Vault connected at "${demoVaultPath}" with 7 notes ready for Semantic Clustering & Project Tracking Harness.`
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Obsidian Startup Speed Optimizer & Project Tracking Harness Endpoints ---
+
+app.post('/api/vault/optimize-obsidian', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  try {
+    const keepSnapshots =
+      typeof req.body?.keepSnapshots === 'number' ? Math.max(0, req.body.keepSnapshots) : 1;
+    const report = await optimizeVaultForObsidian(currentConfig.vaultPath, { keepSnapshots });
+    addLog(`[Obsidian Fast-Init] ${report.message}`, 'success');
+    res.json({ success: true, ...report });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function collectHarnessNotesFromVault(vaultPath: string): Promise<HarnessRawNote[]> {
+  const allFiles = await getFilesRecursively(vaultPath, [], true, true);
+  const rawNotes: HarnessRawNote[] = [];
+  for (const filePath of allFiles) {
+    try {
+      const stat = await fsPromises.stat(filePath);
+      const content = await fsPromises.readFile(filePath, 'utf-8');
+      const parsed = parseNote(content);
+      if (!parsed.body.trim()) continue;
+      const ghost = checkGhostNote(parsed.body);
+      if (ghost.isGhost) continue;
+
+      const rel = path.relative(vaultPath, filePath).replace(/\\/g, '/');
+      const folderRel = path.dirname(rel).replace(/\\/g, '/');
+      const currentFolder = folderRel === '.' ? '' : folderRel;
+      const filename = path.basename(filePath);
+      const title = String(parsed.data.title || path.basename(filePath, '.md'));
+      const fmTags = Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [];
+      const inlineTags = extractTags(
+        parsed.hadFrontmatter ? serializeNote(parsed.data, '') : '',
+        parsed.body,
+        filename
+      );
+      rawNotes.push({
+        path: rel,
+        filename,
+        title,
+        body: parsed.body,
+        folder: currentFolder,
+        tags: Array.from(new Set([...fmTags, ...inlineTags])),
+        frontmatterProject: parsed.data.project ? String(parsed.data.project) : undefined,
+        modifiedTime: stat.mtime.toISOString()
+      });
+    } catch {}
+  }
+  return rawNotes;
+}
+
+app.get('/api/projects/harness', async (_req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.json({
+      projects: [],
+      totalProjects: 0,
+      totalProjectDocs: 0,
+      totalScatteredDocs: 0,
+      totalOpenTasks: 0,
+      totalCompletedTasks: 0,
+      dashboardPath: '00_MOC/Project_Harness_Dashboard.md'
+    });
+  }
+  try {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+    const rawNotes = await collectHarnessNotesFromVault(currentConfig.vaultPath);
+
+    const report = buildProjectTrackingHarness({
+      notes: rawNotes,
+      projectProfiles: taxonomyCfg.projectProfiles,
+      discoveredProjects: projects,
+      axes: taxonomyCfg.axes,
+      projectsRoot
+    });
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/projects/harness/sync', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  const { projectId, routeScattered = true } = req.body || {};
+  try {
+    const projects = await loadProjectsRegistry(currentConfig.vaultPath);
+    const projectsRoot = await detectProjectsRootFolder(currentConfig.vaultPath);
+    const taxonomyCfg = await loadVaultTagTaxonomyConfig(currentConfig.vaultPath, projects, projectsRoot);
+    const rawNotes = await collectHarnessNotesFromVault(currentConfig.vaultPath);
+
+    const report = buildProjectTrackingHarness({
+      notes: rawNotes,
+      projectProfiles: taxonomyCfg.projectProfiles,
+      discoveredProjects: projects,
+      axes: taxonomyCfg.axes,
+      projectsRoot
+    });
+
+    const syncResult = await syncProjectHarnessToVault({
+      vaultPath: currentConfig.vaultPath,
+      report,
+      projectId,
+      routeScattered: Boolean(routeScattered)
+    });
+
+    addLog(
+      `[Project Tracking Harness] Synced ${syncResult.taggedCount} project note(s), routed ${syncResult.routedCount} scattered file(s), and updated "${syncResult.dashboardPath}".`,
+      'success'
+    );
+
+    res.json({
+      success: true,
+      ...syncResult,
+      message: `Project Harness synced: tagged ${syncResult.taggedCount} note(s), routed ${syncResult.routedCount} scattered file(s) to project folders, and updated ${syncResult.dashboardPath}.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/projects/harness/toggle-task', async (req, res) => {
+  if (!currentConfig.vaultPath || !fs.existsSync(currentConfig.vaultPath)) {
+    return res.status(400).json({ error: 'Vault path not configured' });
+  }
+  const { notePath, lineIndex } = req.body || {};
+  if (!notePath || typeof lineIndex !== 'number') {
+    return res.status(400).json({ error: 'notePath and numeric lineIndex are required' });
+  }
+  try {
+    const result = await toggleProjectTaskInVault(currentConfig.vaultPath, String(notePath), lineIndex);
+    addLog(
+      `[Project Harness Task] ${result.completed ? 'Completed' : 'Reopened'} task in "${notePath}" (line ${lineIndex + 1}).`,
+      'success'
+    );
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
