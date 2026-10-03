@@ -67,6 +67,54 @@ describe('A3: Security & Validation', () => {
       expect(isPathInsideVault(testVault, testVault)).toBe(false); // Vault root itself is not an inside file
       expect(isPathInsideVault(testVault, testVault, true)).toBe(true); // When allowRoot is true, vault root is accepted
     });
+
+    it('rejects symlinks inside vault pointing outside vault', async () => {
+      const outsideTarget = path.join(process.cwd(), 'tests', '_temp_outside_sec');
+      await fsPromises.mkdir(outsideTarget, { recursive: true });
+      const secretFile = path.join(outsideTarget, 'secret.txt');
+      await fsPromises.writeFile(secretFile, 'sensitive data', 'utf-8');
+
+      try {
+        // 1. Symlink file inside vault pointing to outside file
+        const symlinkFile = path.join(testVault, 'symlink_outside.md');
+        try {
+          await fsPromises.symlink(secretFile, symlinkFile);
+          expect(isPathInsideVault(symlinkFile, testVault)).toBe(false);
+        } catch (e: any) {
+          // If filesystem does not support symlinks, skip gracefully
+          if (e.code !== 'EPERM') throw e;
+        }
+
+        // 2. Symlink directory inside vault pointing to outside directory
+        const symlinkDir = path.join(testVault, 'escaped_dir');
+        try {
+          await fsPromises.symlink(outsideTarget, symlinkDir, 'dir');
+          const fileInSymlinkDir = path.join(symlinkDir, 'secret.txt');
+          expect(isPathInsideVault(fileInSymlinkDir, testVault)).toBe(false);
+
+          // Target file that does not exist yet under symlinked directory
+          const nonExistentInSymlinkDir = path.join(symlinkDir, 'new_escape.md');
+          expect(isPathInsideVault(nonExistentInSymlinkDir, testVault)).toBe(false);
+        } catch (e: any) {
+          if (e.code !== 'EPERM') throw e;
+        }
+
+        // 3. Symlink inside vault pointing to a valid folder inside vault is allowed
+        const internalFolder = path.join(testVault, '01_Projects');
+        await fsPromises.mkdir(internalFolder, { recursive: true });
+        const internalFile = path.join(internalFolder, 'real.md');
+        await fsPromises.writeFile(internalFile, 'safe', 'utf-8');
+        const internalSymlink = path.join(testVault, 'symlink_internal.md');
+        try {
+          await fsPromises.symlink(internalFile, internalSymlink);
+          expect(isPathInsideVault(internalSymlink, testVault)).toBe(true);
+        } catch (e: any) {
+          if (e.code !== 'EPERM') throw e;
+        }
+      } finally {
+        await fsPromises.rm(outsideTarget, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('ConfigSchema validation', () => {
@@ -122,6 +170,44 @@ describe('A3: Security & Validation', () => {
         maxContextChars: 100, // < 500
       };
       expect(ConfigSchema.safeParse(invalidChars).success).toBe(false);
+    });
+
+    it('enforces offline local endpoints for llamaUrl and decisionModelUrl unless explicitly authorized', () => {
+      // Remote llamaUrl rejected by default
+      const remoteLlama = {
+        vaultPath: testVault,
+        llamaUrl: 'http://remote-server.com:8080',
+        timeoutSeconds: 120,
+        maxContextChars: 2000,
+      };
+      const resRemote = ConfigSchema.safeParse(remoteLlama);
+      expect(resRemote.success).toBe(false);
+      if (!resRemote.success) {
+        expect(resRemote.error.issues[0].message).toContain('local offline endpoint');
+      }
+
+      // Remote decisionModelUrl rejected by default
+      const remoteDecision = {
+        vaultPath: testVault,
+        llamaUrl: 'http://127.0.0.1:8080',
+        decisionModelUrl: 'http://api.openai.com/v1',
+        timeoutSeconds: 120,
+        maxContextChars: 2000,
+      };
+      const resDecision = ConfigSchema.safeParse(remoteDecision);
+      expect(resDecision.success).toBe(false);
+
+      // Authorized remote endpoint passes if allowRemoteEndpoints is explicitly true
+      const authorizedRemote = {
+        vaultPath: testVault,
+        llamaUrl: 'http://remote-server.com:8080',
+        decisionModelUrl: 'http://remote-server.com:1234',
+        allowRemoteEndpoints: true,
+        timeoutSeconds: 120,
+        maxContextChars: 2000,
+      };
+      const resAuth = ConfigSchema.safeParse(authorizedRemote);
+      expect(resAuth.success).toBe(true);
     });
   });
 

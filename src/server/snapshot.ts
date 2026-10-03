@@ -100,14 +100,15 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
 
       backedUpFiles.add(resolvedFile);
 
-      // Persist manifest
-      try {
-        await fsPromises.writeFile(
-          path.join(backupDir, '_manifest.json'),
-          JSON.stringify(fileManifest, null, 2),
-          'utf-8'
-        );
-      } catch {}
+      // Persist manifest atomically
+      const manifestPath = path.join(backupDir, '_manifest.json');
+      const tmpManifest = `${manifestPath}.tmp.${Date.now()}`;
+      await fsPromises.writeFile(
+        tmpManifest,
+        JSON.stringify(fileManifest, null, 2),
+        'utf-8'
+      );
+      await fsPromises.rename(tmpManifest, manifestPath);
 
       return destBackupPath;
     },
@@ -117,14 +118,15 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
       const toRel = path.relative(resolvedVault, path.resolve(toFilePath)).replace(/\\/g, '/');
       if (fromRel !== toRel && !fromRel.startsWith('..') && !toRel.startsWith('..')) {
         movedFiles.push({ fromRel, toRel });
-        try {
-          await fsPromises.mkdir(backupDir, { recursive: true });
-          await fsPromises.writeFile(
-            path.join(backupDir, '_moved_manifest.json'),
-            JSON.stringify(movedFiles, null, 2),
-            'utf-8'
-          );
-        } catch {}
+        const movedManifestPath = path.join(backupDir, '_moved_manifest.json');
+        const tmpMoved = `${movedManifestPath}.tmp.${Date.now()}`;
+        await fsPromises.mkdir(backupDir, { recursive: true });
+        await fsPromises.writeFile(
+          tmpMoved,
+          JSON.stringify(movedFiles, null, 2),
+          'utf-8'
+        );
+        await fsPromises.rename(tmpMoved, movedManifestPath);
       }
     },
     backedUpCount() {
@@ -159,8 +161,13 @@ export async function restoreSnapshotSession(
   const manifestPath = path.join(backupDir, '_manifest.json');
   if (fs.existsSync(manifestPath)) {
     try {
-      manifest = JSON.parse(await fsPromises.readFile(manifestPath, 'utf-8'));
-    } catch {}
+      const rawManifest = await fsPromises.readFile(manifestPath, 'utf-8');
+      manifest = JSON.parse(rawManifest);
+    } catch (err: any) {
+      errors.push(`Manifest corrupted in snapshot "${sessionId}": ${err.message}`);
+    }
+  } else {
+    errors.push(`Manifest _manifest.json missing in snapshot "${sessionId}"`);
   }
 
   async function walkAndRestore(currentDir: string) {
@@ -214,31 +221,39 @@ export async function restoreSnapshotSession(
 
   await walkAndRestore(backupDir);
 
-  // If files were moved to a different folder during the session, remove the moved copies
+  // If files were moved to a different folder during the session, handle moved copies
   const movedManifestPath = path.join(backupDir, '_moved_manifest.json');
   if (fs.existsSync(movedManifestPath)) {
     try {
-      const moves = JSON.parse(await fsPromises.readFile(movedManifestPath, 'utf-8'));
+      const rawMoves = await fsPromises.readFile(movedManifestPath, 'utf-8');
+      const moves = JSON.parse(rawMoves);
       if (Array.isArray(moves)) {
         for (const m of moves) {
           if (m?.toRel && m?.fromRel && m.toRel !== m.fromRel) {
             const movedAbs = path.join(vaultPath, m.toRel);
             const origAbs = path.join(vaultPath, m.fromRel);
-            if (fs.existsSync(movedAbs) && fs.existsSync(origAbs)) {
-              const origHash = await computeSha256(origAbs).catch(() => '');
-              const movedHash = await computeSha256(movedAbs).catch(() => '');
-              if (origHash && movedHash && origHash !== movedHash) {
-                const ts = new Date().toISOString().replace(/[:.]/g, '-');
-                const conflictBackupPath = `${movedAbs}.conflict.${ts}.bak`;
-                await fsPromises.copyFile(movedAbs, conflictBackupPath).catch(() => {});
-                conflicts.push({ targetPath: movedAbs, conflictBackupPath });
+            if (fs.existsSync(movedAbs)) {
+              if (fs.existsSync(origAbs)) {
+                const origHash = await computeSha256(origAbs).catch(() => '');
+                const movedHash = await computeSha256(movedAbs).catch(() => '');
+                // If moved file was modified after move (different from restored original), save conflict backup before unlinking!
+                if (origHash && movedHash && origHash !== movedHash) {
+                  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                  const conflictBackupPath = `${movedAbs}.conflict.${ts}.bak`;
+                  await fsPromises.copyFile(movedAbs, conflictBackupPath);
+                  conflicts.push({ targetPath: movedAbs, conflictBackupPath });
+                }
+                await fsPromises.unlink(movedAbs);
+              } else {
+                errors.push(`Preserving moved file "${m.toRel}" because original "${m.fromRel}" could not be confirmed.`);
               }
-              await fsPromises.unlink(movedAbs).catch(() => {});
             }
           }
         }
       }
-    } catch {}
+    } catch (moveErr: any) {
+      errors.push(`Failed processing moved manifest: ${moveErr.message}`);
+    }
   }
 
   return { restoredCount, conflicts, errors };

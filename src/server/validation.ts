@@ -34,6 +34,7 @@ export function isInboxPathIgnored(inboxPath: string, testPath: string): boolean
 export function isPathInsideVault(targetPath: string, vaultPath: string, allowRoot: boolean = false): boolean {
   if (!vaultPath || !targetPath) return false;
   try {
+    const isWindows = process.platform === 'win32';
     const resolvedVault = path.resolve(vaultPath);
     let realVault = resolvedVault;
     if (fs.existsSync(resolvedVault)) {
@@ -75,9 +76,33 @@ export function isPathInsideVault(targetPath: string, vaultPath: string, allowRo
       }
     }
 
-    const realRel = path.relative(realVault, realTarget);
+    const normVault = isWindows ? realVault.toLowerCase() : realVault;
+    const normTarget = isWindows ? realTarget.toLowerCase() : realTarget;
+
+    const realRel = path.relative(normVault, normTarget);
     if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
       return false;
+    }
+
+    // 3. Check all intermediate directories for symbolic link escapes
+    let cur = path.dirname(resolvedTarget);
+    while (cur && cur.length >= resolvedVault.length) {
+      if (fs.existsSync(cur)) {
+        try {
+          const lstat = fs.lstatSync(cur);
+          if (lstat.isSymbolicLink()) {
+            const realCur = fs.realpathSync(cur);
+            const normCur = isWindows ? realCur.toLowerCase() : realCur;
+            const curRel = path.relative(normVault, normCur);
+            if (curRel.startsWith('..') || path.isAbsolute(curRel)) {
+              return false;
+            }
+          }
+        } catch {}
+      }
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
     }
 
     if (realRel === '') {
@@ -167,14 +192,10 @@ export const ConfigSchema = z.object({
       return false;
     }
   }, { message: 'vaultPath must be an existing absolute directory' }),
-  llamaUrl: z.string().url().refine((val) => {
-    return isLocalEndpoint(val);
-  }, { message: 'llamaUrl must be a local offline endpoint (e.g. http://127.0.0.1:8080 or http://localhost:8080)' }),
+  llamaUrl: z.string().url(),
   timeoutSeconds: z.number().int().min(1).max(3600),
   maxContextChars: z.number().int().min(500).max(32000),
-  decisionModelUrl: z.string().url().refine((val) => {
-    return !val || isLocalEndpoint(val);
-  }, { message: 'decisionModelUrl must be a local offline endpoint (e.g. http://127.0.0.1:1234)' }).optional().default('http://127.0.0.1:1234'),
+  decisionModelUrl: z.string().url().optional().default('http://127.0.0.1:1234'),
   enableDecisionModel: z.boolean().optional().default(false),
   decisionConfidenceThreshold: z.number().min(0.1).max(1.0).optional().default(0.80),
   decisionMode: z.enum(['hybrid', 'fast_routing']).optional().default('hybrid'),
@@ -207,6 +228,24 @@ export const ConfigSchema = z.object({
   threadCount: z.number().int().min(1).max(32).optional().default(4),
   primaryModelFile: z.string().optional().default('Hermes-3-Llama-3.2-3B.Q4_K_M.gguf'),
   jevModelFile: z.string().optional().default('Jev-Style-Qwen3.5-2B-Decision-Q4_K_M.gguf'),
+  allowRemoteEndpoints: z.boolean().optional().default(false),
+}).superRefine((data, ctx) => {
+  if (!data.allowRemoteEndpoints) {
+    if (!isLocalEndpoint(data.llamaUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['llamaUrl'],
+        message: 'llamaUrl must be a local offline endpoint (127.0.0.1, localhost, [::1], 0.0.0.0). Remote endpoints require explicit user authorization via allowRemoteEndpoints: true.'
+      });
+    }
+    if (data.decisionModelUrl && !isLocalEndpoint(data.decisionModelUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['decisionModelUrl'],
+        message: 'decisionModelUrl must be a local offline endpoint (127.0.0.1, localhost, [::1], 0.0.0.0). Remote endpoints require explicit user authorization via allowRemoteEndpoints: true.'
+      });
+    }
+  }
 });
 
 export const DirectoryAuditSchema = z.object({
@@ -259,9 +298,16 @@ export const DecisionTestSchema = z.object({
   filename: z.string().optional().default('Note.md'),
   question: z.string().optional(),
   options: z.array(z.string().min(1)).min(2).max(26).optional(),
-  decisionModelUrl: z.string().url().refine((val) => {
-    return !val || isLocalEndpoint(val);
-  }, { message: 'decisionModelUrl must be a local offline endpoint' }).optional(),
+  decisionModelUrl: z.string().url().optional(),
+  allowRemoteEndpoints: z.boolean().optional().default(false),
+}).superRefine((data, ctx) => {
+  if (data.decisionModelUrl && !data.allowRemoteEndpoints && !isLocalEndpoint(data.decisionModelUrl)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['decisionModelUrl'],
+      message: 'decisionModelUrl must be a local offline endpoint unless allowRemoteEndpoints is explicitly authorized.'
+    });
+  }
 });
 
 export const DecisionTriageResolveSchema = z.object({

@@ -392,4 +392,63 @@ describe('Security & P0 Regression Suite (R1 - R14)', () => {
     const readmeRaw = await fsPromises.readFile(path.join(process.cwd(), 'README.md'), 'utf-8');
     expect(readmeRaw).toContain('v5.3');
   });
+
+  it('R15: isPathInsideVault rejects symlinks escaping the vault', async () => {
+    const secretFile = path.join(outsideDir, 'passwords.txt');
+    await fsPromises.writeFile(secretFile, 'secret123', 'utf-8');
+
+    // 1. Symlink pointing outside vault
+    const symlinkNote = path.join(testVault, '00_Inbox', 'evil_symlink.md');
+    await fsPromises.mkdir(path.dirname(symlinkNote), { recursive: true });
+    try {
+      await fsPromises.symlink(secretFile, symlinkNote);
+      expect(isPathInsideVault(symlinkNote, testVault)).toBe(false);
+    } catch (e: any) {
+      if (e.code !== 'EPERM') throw e;
+    }
+
+    // 2. Symlink directory pointing outside vault
+    const symlinkFolder = path.join(testVault, '01_Projects', 'escaped');
+    await fsPromises.mkdir(path.dirname(symlinkFolder), { recursive: true });
+    try {
+      await fsPromises.symlink(outsideDir, symlinkFolder, 'dir');
+      const escapedTarget = path.join(symlinkFolder, 'new_note.md');
+      expect(isPathInsideVault(escapedTarget, testVault)).toBe(false);
+    } catch (e: any) {
+      if (e.code !== 'EPERM') throw e;
+    }
+  });
+
+  it('R16: snapshot rollback preserves modified files in conflict backups and safely handles moved files', async () => {
+    const noteA = path.join(testVault, '00_Inbox', 'SourceNote.md');
+    await fsPromises.mkdir(path.dirname(noteA), { recursive: true });
+    await fsPromises.writeFile(noteA, '# Original Source Content', 'utf-8');
+
+    const session = createSnapshotSession(testVault, 'move_test_session');
+    await session.backup(noteA);
+
+    // Simulate moving the note during session
+    const noteDest = path.join(testVault, '03_Knowledge', 'Topics', 'SourceNote.md');
+    await fsPromises.mkdir(path.dirname(noteDest), { recursive: true });
+    await fsPromises.rename(noteA, noteDest);
+    await session.recordMove(noteA, noteDest);
+
+    // User edits the moved note before rollback
+    await fsPromises.writeFile(noteDest, '# Updated content in moved file', 'utf-8');
+
+    // Rollback session
+    const res = await restoreSnapshotSession(testVault, 'move_test_session');
+    expect(res.restoredCount).toBe(1);
+    expect(res.conflicts.length).toBe(1);
+
+    // Verify restored original note
+    expect(fs.existsSync(noteA)).toBe(true);
+    expect(await fsPromises.readFile(noteA, 'utf-8')).toContain('# Original Source Content');
+
+    // Verify moved note was safely backed up as conflict file because it had new edits
+    const conflictEntry = res.conflicts.find(c => c.targetPath === noteDest);
+    expect(conflictEntry).toBeDefined();
+    expect(fs.existsSync(conflictEntry!.conflictBackupPath)).toBe(true);
+    expect(await fsPromises.readFile(conflictEntry!.conflictBackupPath, 'utf-8')).toContain('# Updated content in moved file');
+  });
 });

@@ -179,7 +179,10 @@ export async function routeHierarchical(
     suggestedFolder.startsWith('01_Projects/') &&
     suggestedFolder !== '01_Projects/Active' &&
     totalConfidence >= 0.65;
-  const isHighConfidence = totalConfidence >= config.threshold || isConfirmedProjectHeader;
+  const isHighConfidence =
+    Boolean(l1Result.calibrated) &&
+    l1Result.chosen.letter !== '?' &&
+    (totalConfidence >= config.threshold || isConfirmedProjectHeader);
   const needsReview = !isHighConfidence;
 
   return {
