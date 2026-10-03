@@ -123,7 +123,7 @@ npm run start
 
 ### CLI Scripts & Hypergraph Utilities
 ```bash
-npm run test                  # Run full Vitest suite (13 test suites, 120 tests)
+npm run test                  # Run full Vitest suite (13 test suites, 127 tests)
 npm run lint                  # TypeScript strict typecheck (tsc --noEmit)
 npm run calibrate             # Calibrate Jev decision thresholds
 npm run hypergraph:bootstrap  # Bootstrap Dynamic Semantic Hypergraph index

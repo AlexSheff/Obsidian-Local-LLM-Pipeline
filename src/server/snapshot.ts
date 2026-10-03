@@ -46,11 +46,15 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
   const movedFiles: Array<{ fromRel: string; toRel: string }> = [];
   let maintenanceTriggered = false;
 
-  const triggerMaintenanceOnce = () => {
+    const triggerMaintenanceOnce = () => {
     if (maintenanceTriggered) return;
     maintenanceTriggered = true;
-    ensureObsidianIgnoreFilters(vaultPath).catch(() => {});
-    pruneOldSnapshots(vaultPath, 2, sessionId).catch(() => {});
+    ensureObsidianIgnoreFilters(vaultPath).catch((err) => {
+      console.warn(`[Snapshot] Failed to update ignore filters: ${err?.message}`);
+    });
+    pruneOldSnapshots(vaultPath, 2, sessionId).catch((err) => {
+      console.warn(`[Snapshot] Failed to prune old snapshots: ${err?.message}`);
+    });
   };
 
   return {
@@ -82,14 +86,8 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
       await fsPromises.copyFile(resolvedFile, tmpBackup);
       await fsPromises.rename(tmpBackup, destBackupPath);
 
-      let stat: fs.Stats;
-      let sha256 = '';
-      try {
-        stat = await fsPromises.stat(resolvedFile);
-        sha256 = await computeSha256(resolvedFile);
-      } catch {
-        stat = { mtimeMs: Date.now(), size: 0 } as any;
-      }
+      const stat = await fsPromises.stat(resolvedFile);
+      const sha256 = await computeSha256(resolvedFile);
 
       fileManifest[relPath] = {
         relPath,
@@ -114,8 +112,15 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
     },
     async recordMove(fromFilePath: string, toFilePath: string): Promise<void> {
       const resolvedVault = path.resolve(vaultPath);
-      const fromRel = path.relative(resolvedVault, path.resolve(fromFilePath)).replace(/\\/g, '/');
-      const toRel = path.relative(resolvedVault, path.resolve(toFilePath)).replace(/\\/g, '/');
+      const resolvedFrom = path.resolve(fromFilePath);
+      const resolvedTo = path.resolve(toFilePath);
+
+      if (!isPathInsideVault(resolvedFrom, resolvedVault) || !isPathInsideVault(resolvedTo, resolvedVault)) {
+        throw new Error(`Security error: Cannot record move for paths outside vault`);
+      }
+
+      const fromRel = path.relative(resolvedVault, resolvedFrom).replace(/\\/g, '/');
+      const toRel = path.relative(resolvedVault, resolvedTo).replace(/\\/g, '/');
       if (fromRel !== toRel && !fromRel.startsWith('..') && !toRel.startsWith('..')) {
         movedFiles.push({ fromRel, toRel });
         const movedManifestPath = path.join(backupDir, '_moved_manifest.json');
@@ -145,7 +150,8 @@ export function createSnapshotSession(vaultPath: string, customSessionId?: strin
  */
 export async function restoreSnapshotSession(
   vaultPath: string,
-  sessionId: string
+  sessionId: string,
+  options?: { preserveNewerInPlace?: boolean }
 ): Promise<RestoreResult> {
   const backupDir = path.join(vaultPath, '99_System', '_refine_backup', sessionId);
   if (!fs.existsSync(backupDir)) {
@@ -194,15 +200,24 @@ export async function restoreSnapshotSession(
             
             // If contents differ, protect the existing file
             if (currentHash && backupHash && currentHash !== backupHash) {
-              const currentStat = await fsPromises.stat(targetPath).catch(() => ({ mtimeMs: Date.now() }));
               const recordedEntry = manifest[relPath];
               const isDifferentFromSnapshot = recordedEntry?.sha256 ? currentHash !== recordedEntry.sha256 : true;
 
               if (isDifferentFromSnapshot) {
                 const ts = new Date().toISOString().replace(/[:.]/g, '-');
-                const conflictBackupPath = `${targetPath}.conflict.${ts}.bak`;
-                await fsPromises.copyFile(targetPath, conflictBackupPath);
-                conflicts.push({ targetPath, conflictBackupPath });
+                if (options?.preserveNewerInPlace) {
+                  // Keep newer file in place; restore snapshot version to conflict backup
+                  const snapshotBackupPath = `${targetPath}.snapshot.${ts}.bak`;
+                  await fsPromises.copyFile(fullPath, snapshotBackupPath);
+                  conflicts.push({ targetPath, conflictBackupPath: snapshotBackupPath });
+                  restoredCount++;
+                  continue;
+                } else {
+                  // Save newer file to conflict backup, then restore snapshot version
+                  const conflictBackupPath = `${targetPath}.conflict.${ts}.bak`;
+                  await fsPromises.copyFile(targetPath, conflictBackupPath);
+                  conflicts.push({ targetPath, conflictBackupPath });
+                }
               }
             }
           }
@@ -232,6 +247,12 @@ export async function restoreSnapshotSession(
           if (m?.toRel && m?.fromRel && m.toRel !== m.fromRel) {
             const movedAbs = path.join(vaultPath, m.toRel);
             const origAbs = path.join(vaultPath, m.fromRel);
+
+            if (!isPathInsideVault(movedAbs, vaultPath) || !isPathInsideVault(origAbs, vaultPath)) {
+              errors.push(`Security error: Moved manifest path outside vault: ${m.fromRel} -> ${m.toRel}`);
+              continue;
+            }
+
             if (fs.existsSync(movedAbs)) {
               if (fs.existsSync(origAbs)) {
                 const origHash = await computeSha256(origAbs).catch(() => '');

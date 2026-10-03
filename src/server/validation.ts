@@ -55,7 +55,39 @@ export function isPathInsideVault(targetPath: string, vaultPath: string, allowRo
       return false;
     }
 
-    // 2. Canonical filesystem realpath check (symlink escape prevention)
+    const normVault = isWindows ? realVault.toLowerCase() : realVault;
+
+    // 2. Check for symlinks (including dangling or broken symlinks) along the target and its ancestors
+    let checkCur = resolvedTarget;
+    while (checkCur && checkCur.length >= resolvedVault.length) {
+      try {
+        const lstat = fs.lstatSync(checkCur);
+        if (lstat.isSymbolicLink()) {
+          const linkDest = fs.readlinkSync(checkCur);
+          const resolvedLinkDest = path.isAbsolute(linkDest)
+            ? path.resolve(linkDest)
+            : path.resolve(path.dirname(checkCur), linkDest);
+          let realLinkDest = resolvedLinkDest;
+          if (fs.existsSync(resolvedLinkDest)) {
+            try {
+              realLinkDest = fs.realpathSync(resolvedLinkDest);
+            } catch {
+              realLinkDest = resolvedLinkDest;
+            }
+          }
+          const normLinkDest = isWindows ? realLinkDest.toLowerCase() : realLinkDest;
+          const linkRel = path.relative(normVault, normLinkDest);
+          if (linkRel.startsWith('..') || path.isAbsolute(linkRel)) {
+            return false;
+          }
+        }
+      } catch {}
+      const parent = path.dirname(checkCur);
+      if (parent === checkCur) break;
+      checkCur = parent;
+    }
+
+    // 3. Canonical filesystem realpath check
     let realTarget: string;
     if (fs.existsSync(resolvedTarget)) {
       realTarget = fs.realpathSync(resolvedTarget);
@@ -76,33 +108,11 @@ export function isPathInsideVault(targetPath: string, vaultPath: string, allowRo
       }
     }
 
-    const normVault = isWindows ? realVault.toLowerCase() : realVault;
     const normTarget = isWindows ? realTarget.toLowerCase() : realTarget;
 
     const realRel = path.relative(normVault, normTarget);
     if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
       return false;
-    }
-
-    // 3. Check all intermediate directories for symbolic link escapes
-    let cur = path.dirname(resolvedTarget);
-    while (cur && cur.length >= resolvedVault.length) {
-      if (fs.existsSync(cur)) {
-        try {
-          const lstat = fs.lstatSync(cur);
-          if (lstat.isSymbolicLink()) {
-            const realCur = fs.realpathSync(cur);
-            const normCur = isWindows ? realCur.toLowerCase() : realCur;
-            const curRel = path.relative(normVault, normCur);
-            if (curRel.startsWith('..') || path.isAbsolute(curRel)) {
-              return false;
-            }
-          }
-        } catch {}
-      }
-      const parent = path.dirname(cur);
-      if (parent === cur) break;
-      cur = parent;
     }
 
     if (realRel === '') {
@@ -116,7 +126,7 @@ export function isPathInsideVault(targetPath: string, vaultPath: string, allowRo
 }
 
 /**
- * Validates that an endpoint URL is strictly a local offline address (127.0.0.1, localhost, [::1], 0.0.0.0).
+ * Validates that an endpoint URL is strictly a local offline loopback address (127.0.0.0/8, localhost, [::1], 0.0.0.0).
  * Prevents remote model calls and cloud telemetry leaks.
  */
 export function isLocalEndpoint(urlStr: string | undefined): boolean {
@@ -125,9 +135,10 @@ export function isLocalEndpoint(urlStr: string | undefined): boolean {
     const u = new URL(urlStr);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
     const hostname = u.hostname.toLowerCase();
+    const isIpv4Loopback = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
     return (
       hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
+      isIpv4Loopback ||
       hostname === '0.0.0.0' ||
       hostname === '::1' ||
       hostname === '[::1]'

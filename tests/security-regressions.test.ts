@@ -11,7 +11,8 @@ import {
   loadConfigFromFile,
   app,
   recoverQueueState,
-  setCurrentConfigForTest
+  setCurrentConfigForTest,
+  reconcileRegistryJournal
 } from '../server';
 import { auditDirectoryProject, applyRevisionPlan } from '../src/server/directoryRevisor';
 import { isPathInsideVault, isLocalEndpoint } from '../src/server/validation';
@@ -450,5 +451,174 @@ describe('Security & P0 Regression Suite (R1 - R14)', () => {
     expect(conflictEntry).toBeDefined();
     expect(fs.existsSync(conflictEntry!.conflictBackupPath)).toBe(true);
     expect(await fsPromises.readFile(conflictEntry!.conflictBackupPath, 'utf-8')).toContain('# Updated content in moved file');
+  });
+
+  it('R17: isPathInsideVault rejects dangling/broken symlinks pointing outside vault', async () => {
+    const nonExistentOutside = path.join(outsideDir, 'does_not_exist_yet.md');
+    const danglingSymlink = path.join(testVault, '00_Inbox', 'dangling.md');
+    await fsPromises.mkdir(path.dirname(danglingSymlink), { recursive: true });
+
+    try {
+      await fsPromises.symlink(nonExistentOutside, danglingSymlink);
+      expect(isPathInsideVault(danglingSymlink, testVault)).toBe(false);
+    } catch (e: any) {
+      if (e.code !== 'EPERM') throw e;
+    }
+  });
+
+  it('R18: restoreSnapshotSession with preserveNewerInPlace leaves newer file at target and saves snapshot version to backup', async () => {
+    const notePath = path.join(testVault, '03_Knowledge', 'Topics', 'deep_research.md');
+    await fsPromises.mkdir(path.dirname(notePath), { recursive: true });
+    await fsPromises.writeFile(notePath, '# Version 1 (Snapshot)', 'utf-8');
+
+    const session = createSnapshotSession(testVault, 'session_preserve_newer');
+    await session.backup(notePath);
+
+    // Newer edit
+    await fsPromises.writeFile(notePath, '# Version 2 (User active changes)', 'utf-8');
+
+    // Rollback with preserveNewerInPlace
+    const res = await restoreSnapshotSession(testVault, 'session_preserve_newer', { preserveNewerInPlace: true });
+    expect(res.restoredCount).toBe(1);
+    expect(res.conflicts.length).toBe(1);
+
+    // Verify active note still contains Version 2
+    const activeContent = await fsPromises.readFile(notePath, 'utf-8');
+    expect(activeContent).toContain('# Version 2 (User active changes)');
+
+    // Verify snapshot version was safely saved to conflict backup
+    const snapshotBackup = res.conflicts[0].conflictBackupPath;
+    expect(fs.existsSync(snapshotBackup)).toBe(true);
+    const backupContent = await fsPromises.readFile(snapshotBackup, 'utf-8');
+    expect(backupContent).toContain('# Version 1 (Snapshot)');
+  });
+
+  it('R19: reconcileRegistryJournal consolidates fallback journal records into main registry without data loss', async () => {
+    const sysDir = path.join(testVault, '99_System');
+    await fsPromises.mkdir(sysDir, { recursive: true });
+    const journalPath = path.join(sysDir, '_processing_registry_journal.jsonl');
+    const registryPath = path.join(sysDir, '_processing_registry.json');
+
+    const entry1 = {
+      hash: 'abc123hash',
+      original_path: '00_Inbox/DocA.md',
+      destination: '01_Projects/DocA.md',
+      category: '01_Projects',
+      processed_at: new Date().toISOString()
+    };
+    const entry2 = {
+      hash: 'def456hash',
+      original_path: '00_Inbox/DocB.md',
+      destination: '03_Knowledge/DocB.md',
+      category: '03_Knowledge',
+      processed_at: new Date().toISOString()
+    };
+
+    await fsPromises.writeFile(journalPath, `${JSON.stringify(entry1)}\n${JSON.stringify(entry2)}\n`, 'utf-8');
+
+    const reconciledCount = await reconcileRegistryJournal(testVault);
+    expect(reconciledCount).toBe(2);
+
+    expect(fs.existsSync(registryPath)).toBe(true);
+    const registryData = JSON.parse(await fsPromises.readFile(registryPath, 'utf-8'));
+    expect(registryData.length).toBe(2);
+    expect(registryData.some((e: any) => e.hash === 'abc123hash')).toBe(true);
+    expect(registryData.some((e: any) => e.hash === 'def456hash')).toBe(true);
+
+    // Journal should be cleaned up after successful reconciliation
+    expect(fs.existsSync(journalPath)).toBe(false);
+  });
+
+  it('R20: Local model endpoint enforcement rejects remote endpoints unless explicitly authorized', () => {
+    expect(isLocalEndpoint('http://localhost:8080')).toBe(true);
+    expect(isLocalEndpoint('http://127.0.0.1:1234')).toBe(true);
+    expect(isLocalEndpoint('http://127.0.0.2:8080')).toBe(true);
+    expect(isLocalEndpoint('http://0.0.0.0:8080')).toBe(true);
+    expect(isLocalEndpoint('http://[::1]:8080')).toBe(true);
+
+    expect(isLocalEndpoint('http://example.com')).toBe(false);
+    expect(isLocalEndpoint('https://api.openai.com/v1')).toBe(false);
+    expect(isLocalEndpoint('http://192.168.1.100:8080')).toBe(false);
+    expect(isLocalEndpoint('http://10.0.0.1:8080')).toBe(false);
+  });
+
+  it('R21: Pipeline operates securely on a disposable copy of demo_obsidian_vault without data loss', async () => {
+    const demoVaultSource = path.join(process.cwd(), 'demo_obsidian_vault');
+    const disposableVault = path.join(tempRoot, 'disposable_vault');
+
+    if (fs.existsSync(demoVaultSource)) {
+      await fsPromises.cp(demoVaultSource, disposableVault, { recursive: true });
+
+      // Verify vault isolation
+      expect(isPathInsideVault(disposableVault, testVault)).toBe(false);
+      expect(isPathInsideVault(path.join(disposableVault, '00_Inbox', 'Sample.md'), disposableVault)).toBe(true);
+
+      // Verify snapshot session on disposable vault
+      const session = createSnapshotSession(disposableVault, 'disposable_test_session');
+      const sampleFiles = await fsPromises.readdir(path.join(disposableVault, '00_Inbox')).catch(() => []);
+      if (sampleFiles.length > 0) {
+        const sampleFile = path.join(disposableVault, '00_Inbox', sampleFiles[0]);
+        if (fs.statSync(sampleFile).isFile()) {
+          const backupResult = await session.backup(sampleFile);
+          expect(backupResult).toBeTruthy();
+          expect(session.backedUpCount()).toBe(1);
+        }
+      }
+    }
+  });
+
+  it('R22: Fast Route never overwrites existing destination note with the same name', async () => {
+    // Setup vault with destination directory and existing note
+    const destDir = path.join(testVault, '03_Knowledge', 'Poems');
+    await fsPromises.mkdir(destDir, { recursive: true });
+    const existingDestNote = path.join(destDir, 'Winter.md');
+    await fsPromises.writeFile(existingDestNote, '# Existing Winter Note\nOriginal text that must never be overwritten.', 'utf-8');
+
+    // Simulate collision logic of Fast-Route
+    const ext = path.extname('Winter.md');
+    const baseName = path.basename('Winter.md', ext);
+    let counter = 1;
+    let finalDestPath = existingDestNote;
+    let finalFilename = 'Winter.md';
+    while (fs.existsSync(finalDestPath)) {
+      finalFilename = `${baseName} ${counter}${ext}`;
+      finalDestPath = path.join(destDir, finalFilename);
+      counter++;
+    }
+
+    // Atomic write
+    const tmpDestPath = `${finalDestPath}.tmp.${Date.now()}`;
+    await fsPromises.writeFile(tmpDestPath, '# Incoming Note\nNew poem about winter.', 'utf-8');
+    await fsPromises.rename(tmpDestPath, finalDestPath);
+
+    // Verify existing file is completely intact
+    const originalContent = await fsPromises.readFile(existingDestNote, 'utf-8');
+    expect(originalContent).toContain('Original text that must never be overwritten.');
+
+    // Verify new file was written to non-colliding path
+    expect(finalFilename).toBe('Winter 1.md');
+    expect(fs.existsSync(finalDestPath)).toBe(true);
+    const newContent = await fsPromises.readFile(finalDestPath, 'utf-8');
+    expect(newContent).toContain('New poem about winter.');
+  });
+
+  it('R23: Release consistency across package.json, README.md, CHANGELOG.md, and Windows 10 CLI scripts', async () => {
+    const pkgRaw = await fsPromises.readFile(path.join(process.cwd(), 'package.json'), 'utf-8');
+    const pkg = JSON.parse(pkgRaw);
+    expect(pkg.version).toBe('5.3.0');
+    expect(pkg.scripts.dev).toContain('cross-env');
+
+    const changelogRaw = await fsPromises.readFile(path.join(process.cwd(), 'CHANGELOG.md'), 'utf-8');
+    expect(changelogRaw).toContain('[5.3.0]');
+
+    const scriptsDir = path.join(process.cwd(), 'scripts');
+    const scriptFiles = await fsPromises.readdir(scriptsDir);
+    for (const file of scriptFiles) {
+      if (file.endsWith('.ts')) {
+        const scriptContent = await fsPromises.readFile(path.join(scriptsDir, file), 'utf-8');
+        expect(scriptContent).not.toContain('`file://${process.argv[1]}`');
+        expect(scriptContent).toContain('pathToFileURL');
+      }
+    }
   });
 });

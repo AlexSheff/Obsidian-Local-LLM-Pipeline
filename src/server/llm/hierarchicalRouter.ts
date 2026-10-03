@@ -103,15 +103,17 @@ export async function routeHierarchical(
       level2Confidence = l2Result.confidence;
 
       const headerProject = matchProjectByHeader(filename, title, candidateProjects);
-      let matchedProj =
-        candidateProjects.find(
-          p =>
-            (p.aliases[0] || p.id).toLowerCase() === l2Result.chosen.option.toLowerCase() ||
-            p.aliases.some(a => a.toLowerCase() === l2Result.chosen.option.toLowerCase())
-        ) ||
-        candidateProjects[l2Result.chosen.letter.charCodeAt(0) - 65] ||
-        headerProject ||
-        candidateProjects[0];
+      const isL2Valid = l2Result.chosen.letter !== '?' && l2Result.confidence > 0;
+      let matchedProj = isL2Valid
+        ? (candidateProjects.find(
+            p =>
+              (p.aliases[0] || p.id).toLowerCase() === l2Result.chosen.option.toLowerCase() ||
+              p.aliases.some(a => a.toLowerCase() === l2Result.chosen.option.toLowerCase())
+          ) ||
+          candidateProjects[l2Result.chosen.letter.charCodeAt(0) - 65] ||
+          headerProject ||
+          candidateProjects[0])
+        : (headerProject || candidateProjects[0]);
 
       // Check if note is one of project core doc types (C4.3)
       const lowerSnippet = (filename + ' ' + title + ' ' + snippet).toLowerCase().replace(/[_-]+/g, ' ');

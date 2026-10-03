@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 import { bootstrapProjectsYaml } from '../src/server/projectsRegistry';
 
 async function main() {
@@ -19,6 +20,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main();
 }

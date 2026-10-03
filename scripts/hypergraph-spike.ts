@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 const fsPromises = fs.promises;
 import { noul, score, choice } from '../src/server/hypergraph/decisionClient';
 import { loadHypergraphConfig } from '../src/server/hypergraph/config';
@@ -129,6 +130,6 @@ async function main() {
   console.log('========================================================\n');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main();
 }

@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 const fsPromises = fs.promises;
 import { TokensRegistry } from '../src/server/hypergraph/tokensRegistry';
 import { NoteExtractor } from '../src/server/hypergraph/extractor';
@@ -117,6 +118,6 @@ async function main() {
   console.log('================================================================\n');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main();
 }

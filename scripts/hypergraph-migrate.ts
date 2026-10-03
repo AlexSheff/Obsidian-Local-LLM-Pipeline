@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 import { DnaEngine } from '../src/server/hypergraph/dnaEngine';
 import { TokensRegistry } from '../src/server/hypergraph/tokensRegistry';
 import { HypergraphMaintenance } from '../src/server/hypergraph/maintenance';
@@ -43,6 +44,6 @@ async function main() {
   console.log('[Hypergraph Migrate] Migration complete. All schemas at v1.');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main();
 }

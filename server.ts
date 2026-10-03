@@ -153,6 +153,32 @@ function handleFatalCrash(err: any, type: string) {
   }
 }
 
+function gracefulShutdown(signal: string) {
+  console.log(`[SHUTDOWN] Received ${signal}. Executing clean graceful shutdown...`);
+  isShuttingDown = true;
+  if (watcher) {
+    watcher.close().catch(() => {});
+  }
+  if (runningHttpServer) {
+    try {
+      runningHttpServer.close();
+    } catch {}
+  }
+  try {
+    const qPath = getQueueJournalPath();
+    if (qPath) {
+      fs.writeFileSync(qPath, JSON.stringify(fileQueue, null, 2), 'utf-8');
+    }
+  } catch {}
+
+  if (!process.env.VITEST) {
+    process.exit(0);
+  }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
 process.on('uncaughtException', (err: any) => {
   handleFatalCrash(err, 'UNCAUGHT EXCEPTION');
 });
@@ -287,10 +313,15 @@ export function loadConfigFromFile(configFilePath: string = CONFIG_FILE, baseCon
   let loaded = { ...baseConfig };
   try {
     if (fs.existsSync(configFilePath)) {
-      const savedConfig = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
+      const raw = fs.readFileSync(configFilePath, 'utf-8');
+      const savedConfig = JSON.parse(raw);
       loaded = { ...loaded, ...savedConfig };
     }
-  } catch (e) {}
+  } catch (err: any) {
+    const msg = `[Config Error] Failed loading configuration from "${configFilePath}": ${err.message}`;
+    console.error(msg);
+    addLog(msg, 'error');
+  }
   return applyCalibrationGateOnLoad(loaded, (msg) => addLog(msg, 'warn'));
 }
 
@@ -393,7 +424,68 @@ async function persistQueueState(): Promise<void> {
   } catch {}
 }
 
+export async function reconcileRegistryJournal(vaultPath: string): Promise<number> {
+  if (!vaultPath || !fs.existsSync(vaultPath)) return 0;
+  const journalPath = path.join(vaultPath, '99_System', '_processing_registry_journal.jsonl');
+  if (!fs.existsSync(journalPath)) return 0;
+
+  const registryPath = path.join(vaultPath, '99_System', '_processing_registry.json');
+  const unlock = await registryMutex.lock();
+  try {
+    const rawLines = await fsPromises.readFile(journalPath, 'utf-8');
+    const lines = rawLines.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      await fsPromises.unlink(journalPath).catch(() => {});
+      return 0;
+    }
+
+    const journalEntries: any[] = [];
+    for (const line of lines) {
+      try {
+        journalEntries.push(JSON.parse(line));
+      } catch {}
+    }
+
+    if (journalEntries.length === 0) return 0;
+
+    let existingEntries: any[] = [];
+    if (fs.existsSync(registryPath)) {
+      try {
+        existingEntries = JSON.parse(await fsPromises.readFile(registryPath, 'utf-8'));
+        if (!Array.isArray(existingEntries)) existingEntries = [];
+      } catch {
+        existingEntries = [];
+      }
+    }
+
+    let added = 0;
+    for (const jEntry of journalEntries) {
+      if (!existingEntries.some(e => e.hash === jEntry.hash && e.destination === jEntry.destination)) {
+        existingEntries.push(jEntry);
+        added++;
+      }
+    }
+
+    const tmpRegistry = `${registryPath}.tmp.${Date.now()}`;
+    await fsPromises.writeFile(tmpRegistry, JSON.stringify(existingEntries, null, 2), 'utf-8');
+    await fsPromises.rename(tmpRegistry, registryPath);
+    await fsPromises.unlink(journalPath).catch(() => {});
+    if (added > 0) {
+      addLog(`[Crash Recovery] Reconciled ${added} entry(ies) from processing journal to registry.`, 'info');
+    }
+    return added;
+  } catch (err: any) {
+    addLog(`[Journal Reconcile Error] Failed reconciling registry journal: ${err.message}`, 'error');
+    return 0;
+  } finally {
+    unlock();
+  }
+}
+
 export async function recoverQueueState(): Promise<number> {
+  if (currentConfig.vaultPath) {
+    await reconcileRegistryJournal(currentConfig.vaultPath).catch(() => {});
+  }
   const qPath = getQueueJournalPath();
   if (!qPath || !fs.existsSync(qPath)) return 0;
   try {
@@ -1131,14 +1223,74 @@ export async function refineFile(filePath: string, options?: { dryRun?: boolean;
             }
             const finalFileContent = serializeNote(parsedNote.data, parsedNote.body);
             await fsPromises.mkdir(targetDir, { recursive: true });
-            const destPath = path.join(targetDir, originalFilename);
-            if (!isPathInsideVault(destPath, currentConfig.vaultPath)) {
-              throw new Error(`Security Error: Destination path "${destPath}" is outside vault.`);
+
+            let finalDestPath = path.join(targetDir, originalFilename);
+            let finalFilename = originalFilename;
+
+            // Collision check & deduplication if moving across folders
+            if (path.resolve(filePath) !== path.resolve(finalDestPath)) {
+              if (fs.existsSync(finalDestPath)) {
+                // Check if existing file has identical content
+                try {
+                  const existingDestContent = await fsPromises.readFile(finalDestPath, 'utf-8');
+                  const normExisting = getNormalizedBody(existingDestContent);
+                  const normCurrent = getNormalizedBody(finalFileContent);
+                  if (normExisting && (normExisting === normCurrent || computeWordSimilarity(normExisting, normCurrent) >= 80)) {
+                    // Content identical: merge tags and remove redundant copy safely
+                    if (options?.snapshot) {
+                      await options.snapshot.backup(finalDestPath);
+                    }
+                    const merged = mergeTagsIntoFrontmatter(
+                      existingDestContent,
+                      Array.isArray(parsedNote.data.tags) ? (parsedNote.data.tags as string[]) : []
+                    );
+                    const tmpMerged = `${finalDestPath}.tmp.${Date.now()}`;
+                    await fsPromises.writeFile(tmpMerged, merged, 'utf-8');
+                    await fsPromises.rename(tmpMerged, finalDestPath);
+                    await safeArchiveDuplicate(filePath, finalDestPath);
+                    triageManager.syncRefinedFile(filePath, finalDestPath, routeResult.suggestedFolder, originalFilename);
+                    await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
+                    addLog(`Deduplicated in Fast-Route: "${originalFilename}" merged into existing "${finalFilename}".`, 'success');
+                    return;
+                  }
+                } catch {}
+
+                // Content differs: find non-colliding filename (e.g. "Note 1.md")
+                let counter = 1;
+                const ext = path.extname(originalFilename);
+                const baseName = path.basename(originalFilename, ext);
+                while (fs.existsSync(finalDestPath) && path.resolve(finalDestPath) !== path.resolve(filePath)) {
+                  finalFilename = `${baseName} ${counter}${ext}`;
+                  finalDestPath = path.join(targetDir, finalFilename);
+                  counter++;
+                }
+              }
             }
-            await fsPromises.writeFile(filePath, finalFileContent, 'utf-8');
-            if (path.resolve(filePath) !== path.resolve(destPath)) {
-              await fsPromises.rename(filePath, destPath);
-              triageManager.syncRefinedFile(filePath, destPath, routeResult.suggestedFolder, originalFilename);
+
+            if (!isPathInsideVault(finalDestPath, currentConfig.vaultPath)) {
+              throw new Error(`Security Error: Destination path "${finalDestPath}" is outside vault.`);
+            }
+
+            // Atomic write to destination via .tmp file
+            const tmpDestPath = `${finalDestPath}.tmp.${Date.now()}`;
+            await fsPromises.writeFile(tmpDestPath, finalFileContent, 'utf-8');
+            await fsPromises.rename(tmpDestPath, finalDestPath);
+
+            // Verify destination file persistence before unlinking/cleaning source
+            const destStat = await fsPromises.stat(finalDestPath);
+            if (!destStat.isFile() || destStat.size === 0) {
+              throw new Error(`Integrity Error: Destination persistence verification failed for "${finalDestPath}".`);
+            }
+
+            // If path changed, safely record move and remove source only after destination is verified
+            if (path.resolve(filePath) !== path.resolve(finalDestPath)) {
+              if (options?.snapshot && options.snapshot.recordMove) {
+                await options.snapshot.recordMove(filePath, finalDestPath);
+              }
+              await fsPromises.unlink(filePath).catch((unlinkErr) => {
+                addLog(`Warning: Failed to unlink original after fast-routing: ${unlinkErr.message}`, 'warn');
+              });
+              triageManager.syncRefinedFile(filePath, finalDestPath, routeResult.suggestedFolder, finalFilename);
               await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
             }
           }
@@ -1340,9 +1492,11 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
   const destMdPath = path.join(destDir, targetFilename);
   const oldDir = path.dirname(filePath);
 
-  // Write content to current file first
+  // Write content to current file first atomically
   await fsPromises.mkdir(destDir, { recursive: true });
-  await fsPromises.writeFile(filePath, finalFileContent, 'utf-8');
+  const tmpCurrent = `${filePath}.tmp.${Date.now()}`;
+  await fsPromises.writeFile(tmpCurrent, finalFileContent, 'utf-8');
+  await fsPromises.rename(tmpCurrent, filePath);
   
   // --- Deduplication Check: Prevent collision duplicates (e.g. Note 1.md, Note 2.md) ---
   const baseInfo = parseBaseTitle(targetFilename);
@@ -1415,6 +1569,10 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
       await options.snapshot.backup(finalDestPath);
     }
     
+    if (options?.snapshot && options.snapshot.recordMove) {
+      await options.snapshot.recordMove(filePath, finalDestPath);
+    }
+    
     await fsPromises.rename(filePath, finalDestPath);
     triageManager.syncRefinedFile(filePath, finalDestPath, suggestedPath, finalFilename);
     await pruneEmptyParentDirs(currentConfig.vaultPath, oldDir);
@@ -1427,37 +1585,6 @@ Return ONLY raw JSON with these 3 fields (no markdown fences, no commentary):
     addLog(`Refined in place: "${originalFilename}" (${tagsStr})`, 'success');
   }
 }
-
-
-// --- Graceful Shutdown ---
-async function gracefulShutdown() {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-  addLog('Initiating graceful shutdown...', 'info');
-  if (watcher) await watcher.close();
-  
-  const startWait = Date.now();
-  while (activeTasks > 0 && Date.now() - startWait < 130000) {
-    await new Promise(r => setTimeout(r, 500));
-  }
-  addLog('Shutdown complete.', 'success');
-  process.exit(0);
-}
-
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  // addLog can't easily be used directly without a mock if we're outside, but wait, addLog is a global function in server.ts
-  addLog(`Uncaught Exception: ${err.message}`, 'error');
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  addLog(`Unhandled Rejection: ${reason}`, 'error');
-});
-
 
 // --- Main Processing Logic ---
 export async function processFile(filePath: string) {
@@ -2017,6 +2144,10 @@ Extract these exactly 5 fields in valid JSON format:
   try {
     await fsPromises.writeFile(tmpMdPath, finalContent);
     await fsPromises.rename(tmpMdPath, destMdPath);
+    const destStat = await fsPromises.stat(destMdPath);
+    if (!destStat.isFile() || destStat.size === 0) {
+      throw new Error(`Integrity Error: Destination persistence verification failed for "${destMdPath}".`);
+    }
     addLog(`Created note: ${destFolder}/${mdFilename}`, 'success');
   } catch (writeErr: any) {
     if (fs.existsSync(tmpMdPath)) await fsPromises.unlink(tmpMdPath).catch(()=>null);
@@ -2208,8 +2339,11 @@ app.post('/api/config', async (req, res) => {
   
   currentConfig = parseResult.data;
   try {
-    await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(currentConfig, null, 2));
-  } catch(e) {}
+    await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(currentConfig, null, 2), 'utf-8');
+  } catch (writeErr: any) {
+    addLog(`[Config Save Error] Failed saving config file: ${writeErr.message}`, 'error');
+    return res.status(500).json({ error: `Failed to save configuration: ${writeErr.message}` });
+  }
 
   if (currentConfig.vaultPath && fs.existsSync(currentConfig.vaultPath)) {
     optimizeVaultForObsidian(currentConfig.vaultPath, { keepSnapshots: 1 }).catch(() => {});
